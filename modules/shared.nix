@@ -41,7 +41,11 @@ with lib;
     };
 
     tun = {
-      enable = mkEnableOption "TUN mode for transparent proxying. (Note: On Home Manager without NixOS module, this might require manual CAP_NET_ADMIN or sudo wrappers)";
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Enable TUN mode for transparent proxying.";
+      };
     };
 
     dashboard = {

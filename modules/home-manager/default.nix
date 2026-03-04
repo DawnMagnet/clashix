@@ -58,11 +58,19 @@ let
   # We use the XDG state home
   stateDir = "${config.xdg.stateHome}/clashix";
 
+  # Warning for HM users trying to use TUN
+  tunWarning = lib.optionalString cfg.tun.enable ''
+    Clashix TUN mode is enabled within Home Manager.
+    Since user services lack 'CAP_NET_ADMIN' capabilities by default, Mihomo will likely crash when starting TUN.
+    It is highly recommended to use the NixOS module for TUN mode instead.
+  '';
+
 in
 {
   options.programs.clashix = sharedOptions.options.programs.clashix;
 
   config = mkIf cfg.enable {
+    warnings = [ tunWarning ];
 
     # Pre-create state directory and basic config for HM
     home.activation.setupClashixConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -89,9 +97,8 @@ in
         ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
         ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
-        # Note: TUN mode under User Services is generally problematic without wrappers or CAP_NET_ADMIN on the binary
-        # Which NixOS handles via wrappers, but under pure HM on non-NixOS it might fail.
-        # We assume the user has set up sudo rules or capability wrappers if they enable tun in HM.
+        # Note: TUN mode under User Services is generally problematic without wrappers or CAP_NET_ADMIN.
+        # See the warnings generated when tun.enable = true.
       };
     };
 
