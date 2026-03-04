@@ -123,6 +123,7 @@ in
         pkgs.curl
         pkgs.yq
         pkgs.jq
+        pkgs.coreutils
       ];
 
       script = ''
@@ -141,6 +142,23 @@ in
           echo "Fetching $url..."
           temp_sub=$(mktemp)
           if curl -sL --retry 3 "$url" -o "$temp_sub"; then
+
+            # Check if it's valid yaml. If not, try base64 decode
+            if ! yq e '.' "$temp_sub" >/dev/null 2>&1; then
+              echo "Content is not valid YAML, attempting Base64 decode..."
+              # Base64 decode might contain padding, ignore failures and check yaml validity again
+              base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
+              if yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
+                mv "$temp_sub.decoded" "$temp_sub"
+                echo "Base64 decode successful."
+              else
+                echo "Warning: Fetched content is not valid YAML even after Base64 decoding. Skipping."
+                rm -f "$temp_sub.decoded"
+                rm -f "$temp_sub"
+                continue
+              fi
+            fi
+
             # Extract proxies and proxy-groups from the subscription and append them to our merged config
             # (In a real advanced setup, you'd configure proxy-providers instead, but merging proxies works for simple cases)
             yq eval-all '

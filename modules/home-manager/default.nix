@@ -128,6 +128,7 @@ in
             pkgs.curl
             pkgs.yq
             pkgs.jq
+            pkgs.coreutils
             targetPackages.systemd
           ]
         }";
@@ -143,6 +144,22 @@ in
             echo "Fetching $url..."
             temp_sub=$(mktemp)
             if curl -sL --retry 3 "$url" -o "$temp_sub"; then
+
+              # Check if valid YAML
+              if ! ${pkgs.yq}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
+                echo "Content is not valid YAML, attempting Base64 decode..."
+                ${pkgs.coreutils}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
+                if ${pkgs.yq}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
+                  mv "$temp_sub.decoded" "$temp_sub"
+                  echo "Base64 decode successful."
+                else
+                  echo "Warning: Fetched content is not valid YAML even after Base64 decoding. Skipping."
+                  rm -f "$temp_sub.decoded"
+                  rm -f "$temp_sub"
+                  continue
+                fi
+              fi
+
               ${pkgs.yq}/bin/yq eval-all '
                 select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
                 select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
