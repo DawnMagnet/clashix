@@ -1,7 +1,8 @@
-{ config
-, lib
-, pkgs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  ...
 }:
 
 with lib;
@@ -39,9 +40,6 @@ let
     external-controller = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}";
     secret = cfg.secret;
   }
-  // (optionalAttrs (cfg.dashboard.enable && dashboardPkg != null) {
-    external-ui = dashboardPath;
-  })
   // (optionalAttrs cfg.tun.enable {
     tun = {
       enable = true;
@@ -105,6 +103,7 @@ in
     systemd.services.clashix-dashboard = mkIf (cfg.dashboard.enable && cfg.dashboard.type != "none") {
       description = "Clashix Web Dashboard Service (darkhttpd)";
       after = [ "network-online.target" ];
+      wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
@@ -115,41 +114,56 @@ in
     };
 
     # 2. Provide the Subscription Update Timer and Service
-    systemd.services.clashix-update = mkIf (cfg.subscriptionUrl != null) {
-      description = "Update Clashix Subscription";
+    systemd.services.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {
+      description = "Update Clashix Subscriptions";
       after = [ "network-online.target" ];
       requires = [ "network-online.target" ];
 
       path = [
         pkgs.curl
         pkgs.yq
+        pkgs.jq
       ];
 
       script = ''
-        echo "Updating subscription from ${cfg.subscriptionUrl}..."
-        # Download subscription securely to a temp file
-        temp_file=$(mktemp)
-        curl -sL --retry 3 "${cfg.subscriptionUrl}" -o "$temp_file"
+        echo "Updating subscriptions..."
+        merged_file=$(mktemp)
+        urls=(${concatStringsSep " " (map (u: "\"${u}\"") cfg.subscriptionUrls)})
 
-        if [ $? -eq 0 ]; then
-          # We update the main config.yaml but keep our base settings.
-          # Here we just blindly overwrite and append our required base settings.
-          # For a real module, a user might use `proxy-providers` in `extraConfig` instead of downloading the full config.
-          # We'll merge the downloaded config with our base config to ensure the dashboard remains accessible.
+        # We start with the base declarative config
+        cp ${configFile} "$merged_file"
 
-          # Use yq to merge our declarative parts (external-controller, ui) back into the downloaded config
-          yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$temp_file" "${configFile}" > ${stateDir}/config.yaml.new
+        # Initialize proxy array if it doesn't exist
+        yq -i '.proxies //= []' "$merged_file"
+        yq -i '.["proxy-groups"] //= []' "$merged_file"
 
-          mv ${stateDir}/config.yaml.new ${stateDir}/config.yaml
-          rm -f "$temp_file"
+        for url in "''${urls[@]}"; do
+          echo "Fetching $url..."
+          temp_sub=$(mktemp)
+          if curl -sL --retry 3 "$url" -o "$temp_sub"; then
+            # Extract proxies and proxy-groups from the subscription and append them to our merged config
+            # (In a real advanced setup, you'd configure proxy-providers instead, but merging proxies works for simple cases)
+            yq eval-all '
+              select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
+              select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
+              select(fileIndex == 0)
+            ' "$merged_file" "$temp_sub" > "$merged_file.tmp"
+            mv "$merged_file.tmp" "$merged_file"
+          else
+            echo "Failed to fetch $url, skipping..."
+          fi
+          rm -f "$temp_sub"
+        done
 
+        if [ -s "$merged_file" ]; then
+          mv "$merged_file" ${stateDir}/config.yaml
+          chmod 600 ${stateDir}/config.yaml
           echo "Reloading clashix service..."
           systemctl reload clashix.service
         else
-          echo "Failed to download subscription."
-          rm -f "$temp_file"
-          exit 1
+          echo "Merged configuration is empty. Keeping old configuration."
         fi
+        rm -f "$merged_file"
       '';
 
       serviceConfig = {
@@ -158,8 +172,8 @@ in
       };
     };
 
-    systemd.timers.clashix-update = mkIf (cfg.subscriptionUrl != null) {
-      description = "Timer to update Clashix subscription";
+    systemd.timers.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {
+      description = "Timer to update Clashix subscriptions";
       wantedBy = [ "timers.target" ];
       timerConfig = {
         OnCalendar = cfg.updateInterval;

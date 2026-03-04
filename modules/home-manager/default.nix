@@ -1,7 +1,8 @@
-{ config
-, lib
-, pkgs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  ...
 }:
 
 with lib;
@@ -46,9 +47,6 @@ let
       auto-route = true;
       auto-detect-interface = true;
     };
-  })
-  // (optionalAttrs (cfg.dashboard.enable && dashboardPkg != null) {
-    external-ui = dashboardPath;
   });
 
   # Merge the base config with the user's extraConfig
@@ -103,6 +101,7 @@ in
           Unit = {
             Description = "Clashix Web Dashboard Service (darkhttpd, User)";
             After = [ "network-online.target" ];
+            Wants = [ "network-online.target" ];
           };
 
           Install = {
@@ -116,9 +115,9 @@ in
         };
 
     # 2. Provide the Subscription Update Timer and Service for User
-    systemd.user.services.clashix-update = mkIf (cfg.subscriptionUrl != null) {
+    systemd.user.services.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {
       Unit = {
-        Description = "Update Clashix Subscription (User)";
+        Description = "Update Clashix Subscriptions (User)";
         After = [ "network-online.target" ];
       };
 
@@ -128,33 +127,50 @@ in
           lib.makeBinPath [
             pkgs.curl
             pkgs.yq
+            pkgs.jq
             targetPackages.systemd
           ]
         }";
-        # Note: 'systemctl' for user services needs access to XDG_RUNTIME_DIR
         ExecStart = pkgs.writeShellScript "clashix-update-hm" ''
-          echo "Updating subscription from ${cfg.subscriptionUrl}..."
-          temp_file=$(mktemp)
-          curl -sL --retry 3 "${cfg.subscriptionUrl}" -o "$temp_file"
+          echo "Updating subscriptions..."
+          merged_file=$(mktemp)
+          urls=(${concatStringsSep " " (map (u: "\"${u}\"") cfg.subscriptionUrls)})
 
-          if [ $? -eq 0 ]; then
-            ${pkgs.yq}/bin/yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$temp_file" "${configFile}" > ${stateDir}/config.yaml.new
-            mv ${stateDir}/config.yaml.new ${stateDir}/config.yaml
-            rm -f "$temp_file"
+          cp ${configFile} "$merged_file"
+          ${pkgs.yq}/bin/yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$merged_file"
+
+          for url in "''${urls[@]}"; do
+            echo "Fetching $url..."
+            temp_sub=$(mktemp)
+            if curl -sL --retry 3 "$url" -o "$temp_sub"; then
+              ${pkgs.yq}/bin/yq eval-all '
+                select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
+                select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
+                select(fileIndex == 0)
+              ' "$merged_file" "$temp_sub" > "$merged_file.tmp"
+              mv "$merged_file.tmp" "$merged_file"
+            else
+              echo "Failed to fetch $url, skipping..."
+            fi
+            rm -f "$temp_sub"
+          done
+
+          if [ -s "$merged_file" ]; then
+            mv "$merged_file" ${stateDir}/config.yaml
+            chmod 600 ${stateDir}/config.yaml
             echo "Reloading user clashix service..."
             systemctl --user reload clashix.service
           else
-            echo "Failed to download subscription."
-            rm -f "$temp_file"
-            exit 1
+            echo "Merged configuration is empty. Keeping old configuration."
           fi
+          rm -f "$merged_file"
         '';
       };
     };
 
-    systemd.user.timers.clashix-update = mkIf (cfg.subscriptionUrl != null) {
+    systemd.user.timers.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {
       Unit = {
-        Description = "Timer to update Clashix subscription (User)";
+        Description = "Timer to update Clashix subscriptions (User)";
       };
 
       Timer = {

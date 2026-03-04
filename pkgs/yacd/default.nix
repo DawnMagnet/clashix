@@ -8,7 +8,7 @@ stdenv.mkDerivation {
   # The latest yacd-meta release provides a tarball containing the static files
   src = fetchzip {
     url = "https://codeload.github.com/MetaCubeX/Yacd-meta/zip/refs/heads/gh-pages";
-    sha256 = "0gnhipsb76k5ha8i6rj9d5nhr9psy94njyi500fvbbd6j20y1qkj";
+    sha256 = "sha256-6nsAGdD343d/zTTzjccKeAR+6NdJMgaNkfW+QcFJ+s4=";
     extension = "zip";
     stripRoot = false;
   };

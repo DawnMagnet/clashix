@@ -1,8 +1,9 @@
-{ lib
-, pkgs
-, config
-, isHomeManager ? false
-, ...
+{
+  lib,
+  pkgs,
+  config,
+  isHomeManager ? false,
+  ...
 }:
 
 with lib;
@@ -17,12 +18,16 @@ with lib;
       description = "The Mihomo package to use.";
     };
 
-    subscriptionUrl = mkOption {
-      type = types.nullOr types.str;
-      default = null;
+    subscriptionUrls = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [
+        "https://example.com/sub1"
+        "https://example.com/sub2"
+      ];
       description = ''
-        The URL of the clash/mihomo subscription.
-        If set, a systemd timer will continuously fetch and update the proxy providers or full configuration.
+        A list of clash/mihomo subscription URLs.
+        If any are provided, a systemd timer will continuously fetch and merge them into the active configuration.
       '';
     };
 
