@@ -1,0 +1,137 @@
+{ lib
+, pkgs
+, config
+, isHomeManager ? false
+, ...
+}:
+
+with lib;
+{
+  options.programs.clashix = {
+    enable = mkEnableOption "Clashix, a declarative Mihomo client with integrated dashboard";
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs.mihomo;
+      defaultText = literalExpression "pkgs.mihomo";
+      description = "The Mihomo package to use.";
+    };
+
+    subscriptionUrl = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        The URL of the clash/mihomo subscription.
+        If set, a systemd timer will continuously fetch and update the proxy providers or full configuration.
+      '';
+    };
+
+    updateInterval = mkOption {
+      type = types.str;
+      default = "daily";
+      description = ''
+        systemd calendar expression or interval for the subscription update timer.
+        Examples: "daily", "*-*-* 04:00:00", "every 6 hours".
+      '';
+    };
+
+    tun = {
+      enable = mkEnableOption "TUN mode for transparent proxying. (Note: On Home Manager without NixOS module, this might require manual CAP_NET_ADMIN or sudo wrappers)";
+    };
+
+    dashboard = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable serving a web dashboard via darkhttpd.";
+      };
+
+      type = mkOption {
+        type = types.enum [
+          "none"
+          "yacd"
+          "metacubexd"
+          "zashboard"
+        ];
+        default = "yacd";
+        description = "Which dashboard to use. Select 'none' to disable the dashboard UI.";
+      };
+
+      port = mkOption {
+        type = types.port;
+        default = 8080;
+        description = "The port for the darkhttpd dashboard web server.";
+      };
+
+      bindAddress = mkOption {
+        type = types.str;
+        default = "127.0.0.1";
+        description = "The bind address for the darkhttpd web server.";
+      };
+    };
+
+    port = mkOption {
+      type = types.port;
+      default = 7890;
+      description = "HTTP proxy port.";
+    };
+
+    socksPort = mkOption {
+      type = types.port;
+      default = 7891;
+      description = "SOCKS5 proxy port.";
+    };
+
+    mixedPort = mkOption {
+      type = types.port;
+      default = 7892;
+      description = "Mixed (HTTP+SOCKS5) proxy port.";
+    };
+
+    controllerPort = mkOption {
+      type = types.port;
+      default = 9090;
+      description = "The port for the external controller (RESTful API).";
+    };
+
+    secret = mkOption {
+      type = types.str;
+      default = "";
+      description = "Secret for the external controller API.";
+    };
+
+    allowLan = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Allow other devices to connect to the proxy and controller.";
+    };
+
+    mode = mkOption {
+      type = types.enum [
+        "Rule"
+        "Global"
+        "Direct"
+      ];
+      default = "Rule";
+      description = "Mihomo proxy mode.";
+    };
+
+    logLevel = mkOption {
+      type = types.enum [
+        "info"
+        "warning"
+        "error"
+        "debug"
+        "silent"
+      ];
+      default = "info";
+      description = "Mihomo log level.";
+    };
+
+    extraConfig = mkOption {
+      type = types.attrs;
+      default = { };
+      description = "Extra verbatim Mihomo configuration to merge into the generated config.yaml.";
+    };
+  };
+}
