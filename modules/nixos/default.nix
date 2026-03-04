@@ -141,7 +141,7 @@ in
         for url in "''${urls[@]}"; do
           echo "Fetching $url..."
           temp_sub=$(mktemp)
-          if curl -sL --retry 3 "$url" -o "$temp_sub"; then
+          if curl -sL --compressed -A "clash-verge/v2.4.3" --retry 3 "$url" -o "$temp_sub"; then
 
             # Check if it's valid yaml. If not, try base64 decode
             if ! yq e '.' "$temp_sub" >/dev/null 2>&1; then
