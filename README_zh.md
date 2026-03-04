@@ -21,7 +21,7 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    clashix.url = "github:yourname/clashix"; # 这里替换为实际的仓库或本地目录
+    clashix.url = "github:DawnMagnet/clashix";
   };
 
   outputs = { self, nixpkgs, clashix, ... }: {

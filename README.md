@@ -21,7 +21,7 @@ Add `clashix` to your `flake.nix` inputs:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    clashix.url = "github:yourname/clashix"; # Replace with actual path/repo
+    clashix.url = "github:DawnMagnet/clashix";
   };
 
   outputs = { self, nixpkgs, clashix, ... }: {
