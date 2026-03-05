@@ -90,73 +90,15 @@ in
       after = [ "network-online.target" ];
       requires = [ "network-online.target" ];
 
-      path = [
-        pkgs.xh
-        pkgs.yq-go
-        pkgs.toybox
-      ];
-
-      script = ''
-        echo "Updating subscriptions..."
-        merged_file=$(mktemp)
-        urls=(${concatStringsSep " " (map (u: "\"${u}\"") cfg.subscriptionUrls)})
-
-        # We start with the base declarative config
-        cp ${configFile} "$merged_file"
-
-        # Initialize proxy array if it doesn't exist
-        yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$merged_file"
-
-        for url in "''${urls[@]}"; do
-          echo "Fetching $url..."
-          temp_sub=$(mktemp)
-          if xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
-
-            # Check if it's valid yaml. If not, try base64 decode
-            if ! yq e '.' "$temp_sub" >/dev/null 2>&1; then
-              echo "Content is not valid YAML, attempting Base64 decode..."
-              # Base64 decode might contain padding, ignore failures and check yaml validity again
-              base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
-              if yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
-                mv "$temp_sub.decoded" "$temp_sub"
-                echo "Base64 decode successful."
-              else
-                echo "Warning: Fetched content is not valid YAML even after Base64 decoding. Skipping."
-                rm -f "$temp_sub.decoded"
-                rm -f "$temp_sub"
-                continue
-              fi
-            fi
-
-            # Extract proxies and proxy-groups from the subscription and append them to our merged config
-            # (In a real advanced setup, you'd configure proxy-providers instead, but merging proxies works for simple cases)
-            yq eval-all '
-              select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
-              select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
-              select(fileIndex == 0)
-            ' "$merged_file" "$temp_sub" > "$merged_file.tmp"
-            mv "$merged_file.tmp" "$merged_file"
-          else
-            echo "Failed to fetch $url, skipping..."
-          fi
-          rm -f "$temp_sub"
-        done
-
-        if [ -s "$merged_file" ]; then
-          mv "$merged_file" ${stateDir}/config.yaml
-          chmod 600 ${stateDir}/config.yaml
-          echo "Reloading clashix service..."
-          systemctl reload clashix.service
-        else
-          echo "Merged configuration is empty. Keeping old configuration."
-        fi
-        rm -f "$merged_file"
-      '';
-
       serviceConfig = {
         Type = "oneshot";
-        # We need root or the same permissions as the state directory
+        ExecStart = "${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml";
       };
+
+      postStop = ''
+        echo "Reloading clashix service..."
+        systemctl reload clashix.service || true
+      '';
     };
 
     systemd.timers.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {

@@ -59,6 +59,47 @@ let
     in
     recursiveUpdate baseConfig cfg.extraConfig;
 
+  # A script to update subscriptions and merge them into the config
+  mkUpdateScript =
+    cfg:
+    let
+      urls = lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls);
+    in
+    pkgs.writeShellScriptBin "clashix-update" ''
+      set -e
+      CONFIG_FILE="''${1:-config.yaml}"
+      echo "--- Updating subscriptions ---"
+
+      # Initialize structure
+      ${pkgs.yq-go}/bin/yq -i '.proxies |= (. // []) | .["proxy-groups"] |= (. // [])' "$CONFIG_FILE"
+
+      URLS=(${urls})
+      for url in "''${URLS[@]}"; do
+        echo "Fetching $url..."
+        temp_sub=$(mktemp)
+        if env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+          ${pkgs.xh}/bin/xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
+
+          # Base64 check
+          if ! ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
+            ${pkgs.toybox}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
+            if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
+              mv "$temp_sub.decoded" "$temp_sub"
+            fi
+          fi
+
+          if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
+            ${pkgs.yq-go}/bin/yq eval-all -i '
+              select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
+              select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
+              select(fileIndex == 0)
+            ' "$CONFIG_FILE" "$temp_sub"
+          fi
+        fi
+        rm -f "$temp_sub"
+      done
+    '';
+
   # Create a shell environment
   mkShell =
     {
@@ -93,6 +134,59 @@ let
       finalClashConfig = mkClashConfig cfg;
       clashConfigFile = pkgs.writeText "clashix-shell-config.yaml" (builtins.toJSON finalClashConfig);
       dashboardPath = getDashboardPath cfg;
+      updateScript = mkUpdateScript cfg;
+
+      # The main entrypoint for the shell
+      runClashix = pkgs.writeShellScriptBin "clashix-run" ''
+        STATE_DIR=$(mktemp -d /tmp/clashix-shell.XXXXXX)
+        CONFIG_FILE="$STATE_DIR/config.yaml"
+        cp ${clashConfigFile} "$CONFIG_FILE"
+        chmod 600 "$CONFIG_FILE"
+
+        # Secret generation
+        SECRET="${cfg.secret}"
+        if [ -z "$SECRET" ]; then
+          SECRET=$(printf "%06d" $((RANDOM % 1000000)))
+          ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
+        fi
+
+        # Initial fetch
+        ${optionalString (
+          cfg.subscriptionUrls != [ ]
+        ) "${updateScript}/bin/clashix-update \"$CONFIG_FILE\""}
+
+        # Start Services
+        ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f "$CONFIG_FILE" > "$STATE_DIR/mihomo.log" 2>&1 &
+        MIHOMO_PID=$!
+
+        ${optionalString (cfg.dashboard.enable && cfg.dashboard.type != "none") ''
+          ${pkgs.darkhttpd}/bin/darkhttpd ${dashboardPath} --port ${toString cfg.dashboard.port} --addr ${cfg.dashboard.bindAddress} > /dev/null 2>&1 &
+          DASHBOARD_PID=$!
+          DASHBOARD_URL="http://${cfg.dashboard.bindAddress}:${toString cfg.dashboard.port}"
+          SETUP_URL="$DASHBOARD_URL/#/setup?hostname=${cfg.dashboard.bindAddress}&port=${toString cfg.controllerPort}&secret=$SECRET"
+        ''}
+
+        # Output Info
+        echo "--- Clashix Active ---"
+        echo "Proxy: socks5://${cfg.dashboard.bindAddress}:${toString cfg.socksPort}"
+        ${optionalString (cfg.dashboard.enable && cfg.dashboard.type != "none") ''
+          echo "Dashboard (${cfg.dashboard.type}): $DASHBOARD_URL"
+          echo "Direct Link: $SETUP_URL"
+        ''}
+        echo "Logs: $STATE_DIR/mihomo.log"
+        echo "Type 'exit' or Ctrl+D to stop services."
+
+        cleanup() {
+          echo "Stopping Clashix..."
+          kill $MIHOMO_PID ''${DASHBOARD_PID:+ $DASHBOARD_PID} 2>/dev/null
+          rm -rf "$STATE_DIR"
+        }
+        trap cleanup EXIT
+
+        # Keep shell alive or wait if needed. In mkShell, the shell stays alive.
+        # But we want to wait for the PID if we were running as a standalone script.
+        wait
+      '';
 
     in
     pkgs.mkShellNoCC (
@@ -104,80 +198,20 @@ let
           pkgs.xh # Added for subscriptionUrls
           pkgs.yq-go # Added for subscriptionUrls
           pkgs.toybox # Added for base64 in subscriptionUrls
+          updateScript
+          runClashix
         ];
 
         shellHook = ''
-          echo "--- Clashix Shell ---"
           export http_proxy="http://127.0.0.1:${toString cfg.port}"
           export https_proxy="http://127.0.0.1:${toString cfg.port}"
-          export ftp_proxy="http://127.0.0.1:${toString cfg.port}"
           export all_proxy="socks5://127.0.0.1:${toString cfg.socksPort}"
           export HTTP_PROXY="$http_proxy"
           export HTTPS_PROXY="$https_proxy"
-          export FTP_PROXY="$ftp_proxy"
           export ALL_PROXY="$all_proxy"
 
-          STATE_DIR=$(mktemp -d /tmp/clashix-shell.XXXXXX)
-          CONFIG_FILE="$STATE_DIR/config.yaml"
-          cp ${clashConfigFile} "$CONFIG_FILE"
-
-          # Handle secret generation if empty
-          SECRET="${cfg.secret}"
-          if [ -z "$SECRET" ]; then
-            SECRET=$(printf "%06d" $((RANDOM % 1000000)))
-            ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
-          fi
-
-          ${optionalString (cfg.subscriptionUrls != [ ]) ''
-            echo "Fetching subscriptions..."
-            urls=(${lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls)})
-            ${pkgs.yq-go}/bin/yq -i '.proxies |= (. // []) | .["proxy-groups"] |= (. // [])' "$CONFIG_FILE"
-
-            for url in "''${urls[@]}"; do
-              echo "Fetching $url..."
-              temp_sub=$(mktemp)
-              if env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-                ${pkgs.xh}/bin/xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
-                if ! ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
-                  ${pkgs.toybox}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
-                  if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
-                    mv "$temp_sub.decoded" "$temp_sub"
-                  else
-                    rm -f "$temp_sub.decoded" "$temp_sub"
-                    continue
-                  fi
-                fi
-                ${pkgs.yq-go}/bin/yq eval-all '
-                  select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
-                  select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
-                  select(fileIndex == 0)
-                ' "$CONFIG_FILE" "$temp_sub" > "$CONFIG_FILE.tmp"
-                mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-              fi
-              rm -f "$temp_sub"
-            done
-          ''}
-
-          ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f "$CONFIG_FILE" > "$STATE_DIR/mihomo.log" 2>&1 &
-          MIHOMO_PID=$!
-
-          ${optionalString (cfg.dashboard.enable && cfg.dashboard.type != "none") ''
-            ${pkgs.darkhttpd}/bin/darkhttpd ${dashboardPath} --port ${toString cfg.dashboard.port} --addr ${cfg.dashboard.bindAddress} > /dev/null 2>&1 &
-            DASHBOARD_PID=$!
-            echo "Dashboard (${cfg.dashboard.type}): http://${cfg.dashboard.bindAddress}:${toString cfg.dashboard.port}"
-          ''}
-
-          echo "Control Port: ${toString cfg.controllerPort}"
-          echo "Control Secret: $SECRET"
-          echo "Proxy: $all_proxy"
-          echo "Logs are in $STATE_DIR/mihomo.log"
-
-          cleanup() {
-            echo "Stopping Clashix services..."
-            kill $MIHOMO_PID ''${DASHBOARD_PID:+ $DASHBOARD_PID} 2>/dev/null
-            rm -rf "$STATE_DIR"
-          }
-          trap cleanup EXIT
+          # Start services in the background
+          clashix-run &
         ''
         + (args.shellHook or "");
       }
@@ -190,5 +224,6 @@ in
     getDashboardPath
     mkClashConfig
     mkShell
+    mkUpdateScript
     ;
 }

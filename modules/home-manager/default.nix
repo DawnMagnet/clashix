@@ -101,63 +101,10 @@ in
 
       Service = {
         Type = "oneshot";
-        Environment = "PATH=${
-          lib.makeBinPath [
-            pkgs.xh
-            pkgs.yq-go
-            pkgs.toybox
-            targetPackages.systemd
-          ]
-        }";
-        ExecStart = pkgs.writeShellScript "clashix-update-hm" ''
-          echo "Updating subscriptions..."
-          merged_file=$(mktemp)
-          urls=(${concatStringsSep " " (map (u: "\"${u}\"") cfg.subscriptionUrls)})
-
-          cp ${configFile} "$merged_file"
-          yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$merged_file"
-
-          for url in "''${urls[@]}"; do
-            echo "Fetching $url..."
-            temp_sub=$(mktemp)
-            if xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
-
-              # Check if valid YAML
-              if ! yq e '.' "$temp_sub" >/dev/null 2>&1; then
-                echo "Content is not valid YAML, attempting Base64 decode..."
-                base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
-                if yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
-                  mv "$temp_sub.decoded" "$temp_sub"
-                  echo "Base64 decode successful."
-                else
-                  echo "Warning: Fetched content is not valid YAML even after Base64 decoding. Skipping."
-                  rm -f "$temp_sub.decoded"
-                  rm -f "$temp_sub"
-                  continue
-                fi
-              fi
-
-              yq eval-all '
-                select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
-                select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
-                select(fileIndex == 0)
-              ' "$merged_file" "$temp_sub" > "$merged_file.tmp"
-              mv "$merged_file.tmp" "$merged_file"
-            else
-              echo "Failed to fetch $url, skipping..."
-            fi
-            rm -f "$temp_sub"
-          done
-
-          if [ -s "$merged_file" ]; then
-            mv "$merged_file" ${stateDir}/config.yaml
-            chmod 600 ${stateDir}/config.yaml
-            echo "Reloading user clashix service..."
-            systemctl --user reload clashix.service
-          else
-            echo "Merged configuration is empty. Keeping old configuration."
-          fi
-          rm -f "$merged_file"
+        ExecStart = "${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml";
+        ExecStopPost = pkgs.writeShellScript "clashix-post-update-hm" ''
+          echo "Reloading user clashix service..."
+          ${pkgs.systemd}/bin/systemctl --user reload clashix.service || true
         '';
       };
     };
