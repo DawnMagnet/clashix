@@ -262,19 +262,37 @@ let
           # Run synchronously: starts services, prints info, then returns control to the shell
           clashix-run
 
-          # Now set up the cleanup trap using PIDs written by clashix-run
-          _CX_STATE=$(cat /tmp/.clashix-active-state-dir 2>/dev/null)
-          if [ -n "$_CX_STATE" ]; then
-            _cleanup_clashix() {
-              echo ""
-              echo "Stopping Clashix..."
-              [ -f "$_CX_STATE/mihomo.pid" ]   && kill "$(cat "$_CX_STATE/mihomo.pid")"   2>/dev/null || true
-              [ -f "$_CX_STATE/dashboard.pid" ] && kill "$(cat "$_CX_STATE/dashboard.pid")" 2>/dev/null || true
-              rm -rf "$_CX_STATE"
-              rm -f /tmp/.clashix-active-state-dir
+          # Export state dir so the trap function can reliably access it
+          export CLASHIX_STATE_DIR
+          CLASHIX_STATE_DIR=$(cat /tmp/.clashix-active-state-dir 2>/dev/null || echo "")
+
+          _clashix_cleanup() {
+            echo ""
+            echo "Stopping Clashix..."
+
+            _kill_pid_file() {
+              local pid_file="$1"
+              if [ -f "$pid_file" ]; then
+                local pid
+                pid=$(cat "$pid_file")
+                kill -TERM "$pid" 2>/dev/null || true
+                # Wait up to 3s then SIGKILL
+                local i=0
+                while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 6 ]; do
+                  sleep 0.5; i=$((i + 1))
+                done
+                kill -KILL "$pid" 2>/dev/null || true
+              fi
             }
-            trap _cleanup_clashix EXIT
-          fi
+
+            _kill_pid_file "$CLASHIX_STATE_DIR/mihomo.pid"
+            _kill_pid_file "$CLASHIX_STATE_DIR/dashboard.pid"
+            rm -rf "$CLASHIX_STATE_DIR" 2>/dev/null || true
+            rm -f /tmp/.clashix-active-state-dir
+            echo "Clashix stopped."
+          }
+
+          trap _clashix_cleanup EXIT INT TERM
         ''
         + (args.shellHook or "");
       }
