@@ -131,12 +131,13 @@ let
           ${optionalString (cfg.subscriptionUrls != [ ]) ''
             echo "Fetching subscriptions..."
             urls=(${lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls)})
-            ${pkgs.yq-go}/bin/yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$CONFIG_FILE"
+            ${pkgs.yq-go}/bin/yq -i '.proxies |= (. // []) | .["proxy-groups"] |= (. // [])' "$CONFIG_FILE"
 
             for url in "''${urls[@]}"; do
               echo "Fetching $url..."
               temp_sub=$(mktemp)
-              if ${pkgs.xh}/bin/xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
+              if env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+                ${pkgs.xh}/bin/xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
                 if ! ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
                   ${pkgs.toybox}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
                   if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
