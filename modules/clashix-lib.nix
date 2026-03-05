@@ -59,20 +59,37 @@ let
     in
     recursiveUpdate baseConfig cfg.extraConfig;
 
-  # A script to update subscriptions and merge them into the config
+  # A script to apply subscriptions onto the config.
+  #
+  # Strategy: treat the subscription as the PRIMARY config, then overlay our
+  # essential Nix-controlled settings (ports, controller, secret) on top.
+  # This correctly handles complete subscription configs (which already contain
+  # their own proxy-groups, rules, rule-providers, etc.) without causing
+  # duplicate group name errors.
   mkUpdateScript =
     cfg:
     let
       urls = lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls);
+      # Our essential settings that must always win, as a yq expression
+      overlayExpr = lib.concatStringsSep " | " [
+        ".port = ${toString cfg.port}"
+        ''.["socks-port"] = ${toString cfg.socksPort}''
+        ''.["mixed-port"] = ${toString cfg.mixedPort}''
+        ''.["allow-lan"] = ${if cfg.allowLan then "true" else "false"}''
+        ".mode = \"${cfg.mode}\""
+        ''.["log-level"] = "${cfg.logLevel}"''
+        ''.["external-controller"] = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}"''
+        ''.["external-controller-cors"].["allow-origins"] = ["https://yacd.metacubex.one","https://metacubex.github.io","https://board.zash.run.place"]''
+        ''.["external-controller-cors"].["allow-private-network"] = true''
+      ];
     in
     pkgs.writeShellScriptBin "clashix-update" ''
       set -e
       CONFIG_FILE="''${1:-config.yaml}"
+      SECRET="''${2:-}"
       echo "--- Updating subscriptions ---"
 
-      # Initialize structure
-      ${pkgs.yq-go}/bin/yq -i '.proxies |= (. // []) | .["proxy-groups"] |= (. // [])' "$CONFIG_FILE"
-
+      FIRST_URL=true
       URLS=(${urls})
       for url in "''${URLS[@]}"; do
         echo "Fetching $url..."
@@ -80,7 +97,7 @@ let
         if env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
           ${pkgs.xh}/bin/xh "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
 
-          # Base64 check
+          # Base64 decode if not valid YAML
           if ! ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
             ${pkgs.toybox}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
             if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
@@ -89,11 +106,22 @@ let
           fi
 
           if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
-            ${pkgs.yq-go}/bin/yq eval-all -i '
-              select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
-              select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
-              select(fileIndex == 0)
-            ' "$CONFIG_FILE" "$temp_sub"
+            if [ "$FIRST_URL" = "true" ]; then
+              # First subscription: use it as the base, overlay our settings on top
+              ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' "$temp_sub"
+              # Apply secret if provided
+              if [ -n "$SECRET" ]; then
+                ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$temp_sub"
+              fi
+              cp "$temp_sub" "$CONFIG_FILE"
+              FIRST_URL=false
+            else
+              # Additional subscriptions: only merge proxies (not proxy-groups, to avoid naming conflicts)
+              ${pkgs.yq-go}/bin/yq eval-all -i '
+                select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
+                select(fileIndex == 0)
+              ' "$CONFIG_FILE" "$temp_sub"
+            fi
           fi
         fi
         rm -f "$temp_sub"
@@ -153,10 +181,16 @@ let
           ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
         fi
 
-        # Fetch subscriptions before starting mihomo
-        ${optionalString (
-          cfg.subscriptionUrls != [ ]
-        ) "${updateScript}/bin/clashix-update \"$CONFIG_FILE\""}
+        # Fetch subscriptions before starting mihomo.
+        # clashix-update will use the subscription as the primary config and
+        # overlay our essential settings (including the secret) on top.
+        # If no subscriptions are provided, we fall back to the base config.
+        ${optionalString (cfg.subscriptionUrls != [ ]) ''
+          ${updateScript}/bin/clashix-update "$CONFIG_FILE" "$SECRET"
+        ''}
+        ${optionalString (cfg.subscriptionUrls == [ ]) ''
+          ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
+        ''}
 
         # Start services in background
         ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f "$CONFIG_FILE" > "$STATE_DIR/mihomo.log" 2>&1 &
