@@ -133,3 +133,31 @@ in
   programs.clashix.enable = true;
 }
 ```
+
+### 5. Nix Shell Support (Instant Environment)
+
+You can enter a shell with a working proxy and dashboard without installing the module. This is useful for temporary environments or CI/CD.
+
+> [!NOTE]
+> Proxy environment variables (`http_proxy`, etc.) are **only** set automatically when entering these shell environments. They are not set by the NixOS or Home Manager modules during normal installation.
+
+#### Using nix-shell
+To enter a shell with default settings:
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz
+```
+
+To provide a subscription URL:
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz --arg subscriptionUrls '["https://example.com/sub"]'
+```
+
+#### Using Flakes (nix develop)
+```bash
+nix develop github:DawnMagnet/clashix
+```
+
+Upon entering the shell:
+- `mihomo` and `darkhttpd` (dashboard) start in the background.
+- `http_proxy`, `https_proxy`, and `all_proxy` are automatically exported.
+- Everything is cleaned up when you exit the shell.

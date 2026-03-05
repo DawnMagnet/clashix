@@ -28,6 +28,16 @@
         # 格式化器
         formatter = pkgs.nixpkgs-fmt;
 
+        # 开发 Shell
+        devShells.default =
+          let
+            clashixLib = import ./modules/clashix-lib.nix {
+              inherit (pkgs) lib;
+              inherit pkgs;
+            };
+          in
+          clashixLib.mkShell { };
+
         # 测试用例
         checks = {
           vmTest = pkgs.testers.nixosTest {
@@ -61,5 +71,16 @@
 
       homeManagerModules.default = import ./modules/home-manager;
       homeManagerModules.clashix = self.homeManagerModules.default;
+
+      # 导出库
+      lib.mkShell =
+        pkgs:
+        let
+          clashixLib = import ./modules/clashix-lib.nix {
+            inherit (pkgs) lib;
+            inherit pkgs;
+          };
+        in
+        clashixLib.mkShell;
     };
 }

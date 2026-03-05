@@ -133,3 +133,31 @@ in
   programs.clashix.enable = true;
 }
 ```
+
+### 5. Nix Shell 支持（即插即用环境）
+
+您可以在不安装模块的情况下，通过 Nix Shell 直接进入一个预配置好代理和面板的环境。这非常适合临时测试或 CI/CD 环境。
+
+> [!NOTE]
+> **注意**：设置环境变量（如 `http_proxy` 等）的功能**仅**在 `nix-shell` 或 `nix develop` 交互式环境中生效。在 NixOS 或 Home Manager 正常安装后，为了系统整洁，我们不会默认注入全局环境变量。
+
+#### 使用 nix-shell
+直接进入默认配置环境：
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz
+```
+
+传入订阅链接：
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz --arg subscriptionUrls '["https://example.com/sub"]'
+```
+
+#### 使用 Flakes (nix develop)
+```bash
+nix develop github:DawnMagnet/clashix
+```
+
+进入环境后：
+- `mihomo` 指向的代理核心和 `darkhttpd` 面板服务将在后台启动。
+- `http_proxy`, `https_proxy`, 和 `all_proxy` 会自动 export 到当前终端。
+- 退出 Shell 时，相关后台进程和临时目录会自动清理。

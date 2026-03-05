@@ -16,49 +16,12 @@ let
     isHomeManager = true;
   };
 
-  # Select the correct dashboard package based on config
-  dashboardPkg =
-    if cfg.dashboard.type == "yacd" then
-      pkgs.callPackage ../../pkgs/yacd { }
-    else if cfg.dashboard.type == "metacubexd" then
-      pkgs.callPackage ../../pkgs/metacubexd { }
-    else if cfg.dashboard.type == "zashboard" then
-      pkgs.callPackage ../../pkgs/zashboard { }
-    else
-      null;
+  clashixLib = import ../clashix-lib.nix { inherit lib pkgs; };
 
-  dashboardPath = if dashboardPkg != null then "${dashboardPkg}/share/${cfg.dashboard.type}" else "";
+  dashboardPath = clashixLib.getDashboardPath cfg;
 
   # Base generated configuration
-  baseConfig = {
-    port = cfg.port;
-    socks-port = cfg.socksPort;
-    mixed-port = cfg.mixedPort;
-    allow-lan = cfg.allowLan;
-    mode = cfg.mode;
-    log-level = cfg.logLevel;
-    external-controller = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}";
-    external-controller-cors = {
-      allow-origins = [
-        "https://yacd.metacubex.one"
-        "https://metacubex.github.io"
-        "https://board.zash.run.place"
-      ];
-      allow-private-network = true;
-    };
-    secret = cfg.secret;
-  }
-  // (optionalAttrs cfg.tun.enable {
-    tun = {
-      enable = true;
-      stack = "system"; # or gvisor/mixed
-      auto-route = true;
-      auto-detect-interface = true;
-    };
-  });
-
-  # Merge the base config with the user's extraConfig
-  finalConfig = recursiveUpdate baseConfig cfg.extraConfig;
+  finalConfig = clashixLib.mkClashConfig cfg;
 
   configFile = pkgs.writeText "clashix-config.yaml" (builtins.toJSON finalConfig);
 
