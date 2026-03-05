@@ -1,7 +1,7 @@
-{ stdenv, fetchzip }:
+{ stdenvNoCC, fetchzip }:
 
 # yacd-meta: MetaCubeX fork of Yacd
-stdenv.mkDerivation {
+stdenvNoCC.mkDerivation {
   pname = "yacd-meta";
   version = "v0.3.8"; # Or whatever the latest stable is
 

@@ -1,6 +1,6 @@
-{ stdenv, fetchzip }:
+{ stdenvNoCC, fetchzip }:
 
-stdenv.mkDerivation rec {
+stdenvNoCC.mkDerivation rec {
   pname = "zashboard";
   version = "v2.7.0";
 

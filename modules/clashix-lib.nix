@@ -95,7 +95,7 @@ let
       dashboardPath = getDashboardPath cfg;
 
     in
-    pkgs.mkShell (
+    pkgs.mkShellNoCC (
       (removeAttrs args [ "clashixConfig" ])
       // {
         buildInputs = (args.buildInputs or [ ]) ++ [

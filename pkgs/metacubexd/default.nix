@@ -1,7 +1,7 @@
-{ stdenv, fetchzip }:
+{ stdenvNoCC, fetchzip }:
 
 # metacubexd: Official dashboard from MetaCubeX
-stdenv.mkDerivation rec {
+stdenvNoCC.mkDerivation rec {
   pname = "metacubexd";
   version = "v1.241.3"; # Latest version as of writing
 

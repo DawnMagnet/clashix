@@ -10,6 +10,7 @@ let
 in
 clashixLib.mkShell {
   clashixConfig = {
+    dashboard.type = "zashboard";
     inherit subscriptionUrls;
   };
 }
