@@ -38,6 +38,14 @@ let
     mode = cfg.mode;
     log-level = cfg.logLevel;
     external-controller = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}";
+    external-controller-cors = {
+      allow-origins = [
+        "https://yacd.metacubex.one"
+        "https://metacubex.github.io"
+        "https://board.zash.run.place"
+      ];
+      allow-private-network = true;
+    };
     secret = cfg.secret;
   }
   // (optionalAttrs cfg.tun.enable {
