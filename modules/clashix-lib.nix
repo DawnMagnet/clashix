@@ -78,7 +78,7 @@ let
         echo "Fetching $url..."
         temp_sub=$(mktemp)
         if env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-          ${pkgs.xh}/bin/xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
+          ${pkgs.xh}/bin/xh "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
 
           # Base64 check
           if ! ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
@@ -136,7 +136,10 @@ let
       dashboardPath = getDashboardPath cfg;
       updateScript = mkUpdateScript cfg;
 
-      # The main entrypoint for the shell
+      # The main entrypoint for the shell.
+      # It runs synchronously in shellHook: starts services in background,
+      # saves PIDs to a state file, prints info, then exits.
+      # This ensures all output appears before the interactive shell prompt.
       runClashix = pkgs.writeShellScriptBin "clashix-run" ''
         STATE_DIR=$(mktemp -d /tmp/clashix-shell.XXXXXX)
         CONFIG_FILE="$STATE_DIR/config.yaml"
@@ -150,42 +153,36 @@ let
           ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
         fi
 
-        # Initial fetch
+        # Fetch subscriptions before starting mihomo
         ${optionalString (
           cfg.subscriptionUrls != [ ]
         ) "${updateScript}/bin/clashix-update \"$CONFIG_FILE\""}
 
-        # Start Services
+        # Start services in background
         ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f "$CONFIG_FILE" > "$STATE_DIR/mihomo.log" 2>&1 &
-        MIHOMO_PID=$!
+        echo $! > "$STATE_DIR/mihomo.pid"
 
         ${optionalString (cfg.dashboard.enable && cfg.dashboard.type != "none") ''
           ${pkgs.darkhttpd}/bin/darkhttpd ${dashboardPath} --port ${toString cfg.dashboard.port} --addr ${cfg.dashboard.bindAddress} > /dev/null 2>&1 &
-          DASHBOARD_PID=$!
+          echo $! > "$STATE_DIR/dashboard.pid"
           DASHBOARD_URL="http://${cfg.dashboard.bindAddress}:${toString cfg.dashboard.port}"
           SETUP_URL="$DASHBOARD_URL/#/setup?hostname=${cfg.dashboard.bindAddress}&port=${toString cfg.controllerPort}&secret=$SECRET"
         ''}
 
-        # Output Info
+        # Let the shellHook know where we stored state
+        echo "$STATE_DIR" > /tmp/.clashix-active-state-dir
+
+        # Print info now — this is synchronous, so it appears before the prompt
+        echo ""
         echo "--- Clashix Active ---"
-        echo "Proxy: socks5://${cfg.dashboard.bindAddress}:${toString cfg.socksPort}"
+        echo "Proxy:      socks5://${cfg.dashboard.bindAddress}:${toString cfg.socksPort}"
         ${optionalString (cfg.dashboard.enable && cfg.dashboard.type != "none") ''
-          echo "Dashboard (${cfg.dashboard.type}): $DASHBOARD_URL"
-          echo "Direct Link: $SETUP_URL"
+          echo "Dashboard:  $DASHBOARD_URL"
+          echo "Login URL:  $SETUP_URL"
         ''}
-        echo "Logs: $STATE_DIR/mihomo.log"
-        echo "Type 'exit' or Ctrl+D to stop services."
-
-        cleanup() {
-          echo "Stopping Clashix..."
-          kill $MIHOMO_PID ''${DASHBOARD_PID:+ $DASHBOARD_PID} 2>/dev/null
-          rm -rf "$STATE_DIR"
-        }
-        trap cleanup EXIT
-
-        # Keep shell alive or wait if needed. In mkShell, the shell stays alive.
-        # But we want to wait for the PID if we were running as a standalone script.
-        wait
+        echo "Logs:       $STATE_DIR/mihomo.log"
+        echo "Tip:        Type 'exit' or Ctrl+D to stop all services."
+        echo ""
       '';
 
     in
@@ -210,8 +207,22 @@ let
           export HTTPS_PROXY="$https_proxy"
           export ALL_PROXY="$all_proxy"
 
-          # Start services in the background
-          clashix-run &
+          # Run synchronously: starts services, prints info, then returns control to the shell
+          clashix-run
+
+          # Now set up the cleanup trap using PIDs written by clashix-run
+          _CX_STATE=$(cat /tmp/.clashix-active-state-dir 2>/dev/null)
+          if [ -n "$_CX_STATE" ]; then
+            _cleanup_clashix() {
+              echo ""
+              echo "Stopping Clashix..."
+              [ -f "$_CX_STATE/mihomo.pid" ]   && kill "$(cat "$_CX_STATE/mihomo.pid")"   2>/dev/null || true
+              [ -f "$_CX_STATE/dashboard.pid" ] && kill "$(cat "$_CX_STATE/dashboard.pid")" 2>/dev/null || true
+              rm -rf "$_CX_STATE"
+              rm -f /tmp/.clashix-active-state-dir
+            }
+            trap _cleanup_clashix EXIT
+          fi
         ''
         + (args.shellHook or "");
       }
