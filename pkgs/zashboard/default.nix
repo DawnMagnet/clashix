@@ -5,7 +5,7 @@ stdenvNoCC.mkDerivation rec {
   version = "v2.7.0";
 
   src = fetchzip {
-    url = "https://github.com/Zephyruso/zashboard/releases/download/${version}/dist.zip";
+    url = "https://mirror.ghproxy.com/https://github.com/Zephyruso/zashboard/releases/download/${version}/dist.zip";
     sha256 = "sha256-V3luGGR8xb88oLDMHQGQc0IhTZjRJ6RLe6fIBQ5W9Og=";
     stripRoot = false;
   };

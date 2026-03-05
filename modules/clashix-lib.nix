@@ -7,6 +7,31 @@ let
     optionalString
     ;
 
+  # Pre-bundled geodata fetched via jsDelivr CDN.
+  # Copied into STATE_DIR before mihomo starts so it never needs to download them.
+  geodataFiles = {
+    mmdb = pkgs.fetchurl {
+      url = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb";
+      sha256 = "0xnsgpxlpqzlf2mpg6gy2ha4cql4lcld2zhjbl4ilrrl9mbcqcvr";
+    };
+    geoip = pkgs.fetchurl {
+      url = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat";
+      sha256 = "0jxhaihblyh07jwhv5sb3pv5k0jg4516ssdkq9r24mldp65chzaz";
+    };
+    geosite = pkgs.fetchurl {
+      url = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat";
+      sha256 = "18jnzaplid44pf6dpy8mhkjl5psy0v9aqcq9fc0vy3cdv1n7js3p";
+    };
+  };
+
+  # jsDelivr CDN URLs for geodata updates (used by mihomo when updating geodata at runtime)
+  geoxUrls = {
+    mmdb = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb";
+    geoip = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat";
+    geosite = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat";
+    asn = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb";
+  };
+
   # Select the correct dashboard package based on config
   getDashboardPkg =
     cfg:
@@ -47,6 +72,8 @@ let
           allow-private-network = true;
         };
         secret = cfg.secret;
+        # Override geodata update URLs to use CDN instead of GitHub
+        geox-url = geoxUrls;
       }
       // (optionalAttrs cfg.tun.enable {
         tun = {
@@ -209,6 +236,12 @@ let
         rm -f /tmp/.clashix-active-state-dir
         # Give processes a moment to release their ports
         sleep 0.5
+
+        # Pre-populate geodata from Nix store so mihomo never needs to download them
+        cp ${geodataFiles.mmdb}    "$STATE_DIR/geoip.metadb"
+        cp ${geodataFiles.geoip}   "$STATE_DIR/geoip.dat"
+        cp ${geodataFiles.geosite} "$STATE_DIR/geosite.dat"
+        chmod 644 "$STATE_DIR/geoip.metadb" "$STATE_DIR/geoip.dat" "$STATE_DIR/geosite.dat"
 
         # Start services in background
         ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f "$CONFIG_FILE" > "$STATE_DIR/mihomo.log" 2>&1 &
