@@ -101,9 +101,9 @@ let
         buildInputs = (args.buildInputs or [ ]) ++ [
           cfg.package
           pkgs.darkhttpd
-          pkgs.curl # Added for subscriptionUrls
-          pkgs.yq # Added for subscriptionUrls
-          pkgs.coreutils # Added for base64 in subscriptionUrls
+          pkgs.xh # Added for subscriptionUrls
+          pkgs.yq-go # Added for subscriptionUrls
+          pkgs.toybox # Added for base64 in subscriptionUrls
         ];
 
         shellHook = ''
@@ -121,25 +121,32 @@ let
           CONFIG_FILE="$STATE_DIR/config.yaml"
           cp ${clashConfigFile} "$CONFIG_FILE"
 
+          # Handle secret generation if empty
+          SECRET="${cfg.secret}"
+          if [ -z "$SECRET" ]; then
+            SECRET=$(printf "%06d" $((RANDOM % 1000000)))
+            ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
+          fi
+
           ${optionalString (cfg.subscriptionUrls != [ ]) ''
             echo "Fetching subscriptions..."
             urls=(${lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls)})
-            ${pkgs.yq}/bin/yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$CONFIG_FILE"
+            ${pkgs.yq-go}/bin/yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$CONFIG_FILE"
 
             for url in "''${urls[@]}"; do
               echo "Fetching $url..."
               temp_sub=$(mktemp)
-              if ${pkgs.curl}/bin/curl -sL --compressed -A "clash-verge/v2.4.3" --retry 3 "$url" -o "$temp_sub"; then
-                if ! ${pkgs.yq}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
-                  ${pkgs.coreutils}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
-                  if ${pkgs.yq}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
+              if ${pkgs.xh}/bin/xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
+                if ! ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
+                  ${pkgs.toybox}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
+                  if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
                     mv "$temp_sub.decoded" "$temp_sub"
                   else
                     rm -f "$temp_sub.decoded" "$temp_sub"
                     continue
                   fi
                 fi
-                ${pkgs.yq}/bin/yq eval-all '
+                ${pkgs.yq-go}/bin/yq eval-all '
                   select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
                   select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
                   select(fileIndex == 0)
@@ -159,6 +166,8 @@ let
             echo "Dashboard (${cfg.dashboard.type}): http://${cfg.dashboard.bindAddress}:${toString cfg.dashboard.port}"
           ''}
 
+          echo "Control Port: ${toString cfg.controllerPort}"
+          echo "Control Secret: $SECRET"
           echo "Proxy: $all_proxy"
           echo "Logs are in $STATE_DIR/mihomo.log"
 

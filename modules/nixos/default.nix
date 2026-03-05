@@ -43,7 +43,7 @@ in
 
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
-        ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+        ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
         StateDirectory = "clashix";
 
@@ -91,10 +91,9 @@ in
       requires = [ "network-online.target" ];
 
       path = [
-        pkgs.curl
-        pkgs.yq
-        pkgs.jq
-        pkgs.coreutils
+        pkgs.xh
+        pkgs.yq-go
+        pkgs.toybox
       ];
 
       script = ''
@@ -106,13 +105,12 @@ in
         cp ${configFile} "$merged_file"
 
         # Initialize proxy array if it doesn't exist
-        yq -i '.proxies //= []' "$merged_file"
-        yq -i '.["proxy-groups"] //= []' "$merged_file"
+        yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$merged_file"
 
         for url in "''${urls[@]}"; do
           echo "Fetching $url..."
           temp_sub=$(mktemp)
-          if curl -sL --compressed -A "clash-verge/v2.4.3" --retry 3 "$url" -o "$temp_sub"; then
+          if xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
 
             # Check if it's valid yaml. If not, try base64 decode
             if ! yq e '.' "$temp_sub" >/dev/null 2>&1; then

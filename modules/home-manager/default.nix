@@ -66,7 +66,7 @@ in
 
       Service = {
         ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
-        ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+        ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
         # Note: TUN mode under User Services is generally problematic without wrappers or CAP_NET_ADMIN.
         # See the warnings generated when tun.enable = true.
@@ -103,10 +103,9 @@ in
         Type = "oneshot";
         Environment = "PATH=${
           lib.makeBinPath [
-            pkgs.curl
-            pkgs.yq
-            pkgs.jq
-            pkgs.coreutils
+            pkgs.xh
+            pkgs.yq-go
+            pkgs.toybox
             targetPackages.systemd
           ]
         }";
@@ -116,18 +115,18 @@ in
           urls=(${concatStringsSep " " (map (u: "\"${u}\"") cfg.subscriptionUrls)})
 
           cp ${configFile} "$merged_file"
-          ${pkgs.yq}/bin/yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$merged_file"
+          yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$merged_file"
 
           for url in "''${urls[@]}"; do
             echo "Fetching $url..."
             temp_sub=$(mktemp)
-            if curl -sL --compressed -A "clash-verge/v2.4.3" --retry 3 "$url" -o "$temp_sub"; then
+            if xh -F -q "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
 
               # Check if valid YAML
-              if ! ${pkgs.yq}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
+              if ! yq e '.' "$temp_sub" >/dev/null 2>&1; then
                 echo "Content is not valid YAML, attempting Base64 decode..."
-                ${pkgs.coreutils}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
-                if ${pkgs.yq}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
+                base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
+                if yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
                   mv "$temp_sub.decoded" "$temp_sub"
                   echo "Base64 decode successful."
                 else
@@ -138,7 +137,7 @@ in
                 fi
               fi
 
-              ${pkgs.yq}/bin/yq eval-all '
+              yq eval-all '
                 select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
                 select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
                 select(fileIndex == 0)
