@@ -192,6 +192,24 @@ let
           ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
         ''}
 
+        # --- Cleanup any stale previous session ---
+        # If a previous clashix-run left a state dir (e.g. shell was killed),
+        # terminate those processes now before we try to bind the same ports.
+        _PREV_STATE=$(cat /tmp/.clashix-active-state-dir 2>/dev/null || true)
+        if [ -n "$_PREV_STATE" ] && [ -d "$_PREV_STATE" ]; then
+          echo "Cleaning up previous session in $_PREV_STATE..."
+          if [ -f "$_PREV_STATE/mihomo.pid" ]; then
+            kill "$(cat "$_PREV_STATE/mihomo.pid")" 2>/dev/null || true
+          fi
+          if [ -f "$_PREV_STATE/dashboard.pid" ]; then
+            kill "$(cat "$_PREV_STATE/dashboard.pid")" 2>/dev/null || true
+          fi
+          rm -rf "$_PREV_STATE"
+        fi
+        rm -f /tmp/.clashix-active-state-dir
+        # Give processes a moment to release their ports
+        sleep 0.5
+
         # Start services in background
         ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f "$CONFIG_FILE" > "$STATE_DIR/mihomo.log" 2>&1 &
         echo $! > "$STATE_DIR/mihomo.pid"

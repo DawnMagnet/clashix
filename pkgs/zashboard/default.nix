@@ -16,7 +16,8 @@ stdenvNoCC.mkDerivation rec {
     runHook preInstall
 
     mkdir -p $out/share/zashboard
-    cp -r $src/* $out/share/zashboard/
+    # dist.zip extracts to a dist/ subdirectory; copy its contents directly
+    cp -r $src/dist/* $out/share/zashboard/
 
     runHook postInstall
   '';
