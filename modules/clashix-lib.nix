@@ -81,7 +81,7 @@ let
           name: value:
           if value ? default then
             value.default
-          else if builtins.isAttrs value then
+          else if isAttrs value then
             getDefaults value
           else
             null
@@ -91,16 +91,19 @@ let
       cfg = recursiveUpdate (getDefaults shared.options.programs.clashix) clashixConfig;
 
       finalClashConfig = mkClashConfig cfg;
-      clashConfigFile = pkgs.writeText "clashix-shell-config.yaml" (builtins.toJSON finalClashConfig);
+      clashConfigFile = pkgs.writeText "clashix-shell-config.yaml" (toJSON finalClashConfig);
       dashboardPath = getDashboardPath cfg;
 
     in
     pkgs.mkShell (
-      args
+      (removeAttrs args [ "clashixConfig" ])
       // {
         buildInputs = (args.buildInputs or [ ]) ++ [
           cfg.package
           pkgs.darkhttpd
+          pkgs.curl # Added for subscriptionUrls
+          pkgs.yq # Added for subscriptionUrls
+          pkgs.coreutils # Added for base64 in subscriptionUrls
         ];
 
         shellHook = ''
@@ -115,8 +118,39 @@ let
           export ALL_PROXY="$all_proxy"
 
           STATE_DIR=$(mktemp -d /tmp/clashix-shell.XXXXXX)
+          CONFIG_FILE="$STATE_DIR/config.yaml"
+          cp ${clashConfigFile} "$CONFIG_FILE"
 
-          ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f ${clashConfigFile} > "$STATE_DIR/mihomo.log" 2>&1 &
+          ${optionalString (cfg.subscriptionUrls != [ ]) ''
+            echo "Fetching subscriptions..."
+            urls=(${lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls)})
+            ${pkgs.yq}/bin/yq -i '.proxies //= [] | .["proxy-groups"] //= []' "$CONFIG_FILE"
+
+            for url in "''${urls[@]}"; do
+              echo "Fetching $url..."
+              temp_sub=$(mktemp)
+              if ${pkgs.curl}/bin/curl -sL --compressed -A "clash-verge/v2.4.3" --retry 3 "$url" -o "$temp_sub"; then
+                if ! ${pkgs.yq}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
+                  ${pkgs.coreutils}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
+                  if ${pkgs.yq}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
+                    mv "$temp_sub.decoded" "$temp_sub"
+                  else
+                    rm -f "$temp_sub.decoded" "$temp_sub"
+                    continue
+                  fi
+                fi
+                ${pkgs.yq}/bin/yq eval-all '
+                  select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
+                  select(fileIndex == 0)["proxy-groups"] += (select(fileIndex == 1)["proxy-groups"] // []) |
+                  select(fileIndex == 0)
+                ' "$CONFIG_FILE" "$temp_sub" > "$CONFIG_FILE.tmp"
+                mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+              fi
+              rm -f "$temp_sub"
+            done
+          ''}
+
+          ${cfg.package}/bin/mihomo -d "$STATE_DIR" -f "$CONFIG_FILE" > "$STATE_DIR/mihomo.log" 2>&1 &
           MIHOMO_PID=$!
 
           ${optionalString (cfg.dashboard.enable && cfg.dashboard.type != "none") ''
