@@ -81,7 +81,7 @@ let
           name: value:
           if value ? default then
             value.default
-          else if isAttrs value then
+          else if builtins.isAttrs value then
             getDefaults value
           else
             null
@@ -91,7 +91,7 @@ let
       cfg = recursiveUpdate (getDefaults shared.options.programs.clashix) clashixConfig;
 
       finalClashConfig = mkClashConfig cfg;
-      clashConfigFile = pkgs.writeText "clashix-shell-config.yaml" (toJSON finalClashConfig);
+      clashConfigFile = pkgs.writeText "clashix-shell-config.yaml" (builtins.toJSON finalClashConfig);
       dashboardPath = getDashboardPath cfg;
 
     in
