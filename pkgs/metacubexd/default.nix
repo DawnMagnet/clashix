@@ -7,7 +7,7 @@ stdenvNoCC.mkDerivation rec {
 
   src = fetchzip {
     # REAL
-    url = "https://mirror.ghproxy.com/https://github.com/MetaCubeX/metacubexd/releases/download/${version}/compressed-dist.tgz";
+    url = "https://github.com/MetaCubeX/metacubexd/releases/download/${version}/compressed-dist.tgz";
     sha256 = "1bmpzyy7m1736inckz3v7lhx4nac4pa9p113j1jvs9aspwpw8q6i";
     stripRoot = false;
   };
