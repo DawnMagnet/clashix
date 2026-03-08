@@ -50,35 +50,34 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
 
-      serviceConfig =
-        {
-          ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
-          ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
-          Restart = "on-failure";
-          StateDirectory = "clashix";
-        }
-        // (
-          if cfg.tun.enable then
-            {
-              # Dedicated user with only the required capabilities — not root
-              DynamicUser = false;
-              User = "clashix";
-              Group = "clashix";
-              AmbientCapabilities = [
-                "CAP_NET_ADMIN"
-                "CAP_NET_BIND_SERVICE"
-              ];
-              CapabilityBoundingSet = [
-                "CAP_NET_ADMIN"
-                "CAP_NET_BIND_SERVICE"
-              ];
-            }
-          else
-            {
-              # Ephemeral dynamic user for maximum isolation when TUN is off
-              DynamicUser = true;
-            }
-        );
+      serviceConfig = {
+        ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
+        ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
+        Restart = "on-failure";
+        StateDirectory = "clashix";
+      }
+      // (
+        if cfg.tun.enable then
+          {
+            # Dedicated user with only the required capabilities — not root
+            DynamicUser = false;
+            User = "clashix";
+            Group = "clashix";
+            AmbientCapabilities = [
+              "CAP_NET_ADMIN"
+              "CAP_NET_BIND_SERVICE"
+            ];
+            CapabilityBoundingSet = [
+              "CAP_NET_ADMIN"
+              "CAP_NET_BIND_SERVICE"
+            ];
+          }
+        else
+          {
+            # Ephemeral dynamic user for maximum isolation when TUN is off
+            DynamicUser = true;
+          }
+      );
 
       # Generation-aware initialisation:
       #  1. On first boot: seed config.yaml from bootstrapConfig (if provided)
@@ -92,11 +91,16 @@ in
       preStart = ''
         # --- 1. Bootstrap config.yaml on first boot --------------------------------
         if [ ! -f ${stateDir}/config.yaml ]; then
-          ${if cfg.bootstrapConfig != null then ''
-            cp ${cfg.bootstrapConfig} ${stateDir}/config.yaml
-          '' else ''
-            cp ${configFile} ${stateDir}/config.yaml
-          ''}
+          ${
+            if cfg.bootstrapConfig != null then
+              ''
+                cp ${cfg.bootstrapConfig} ${stateDir}/config.yaml
+              ''
+            else
+              ''
+                cp ${configFile} ${stateDir}/config.yaml
+              ''
+          }
           chmod 600 ${stateDir}/config.yaml
           # Overlay Nix-controlled settings immediately so ports/controller are
           # correct from the very first start, regardless of what the seeded file

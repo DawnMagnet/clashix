@@ -53,11 +53,16 @@ in
 
       # --- 1. Bootstrap config.yaml on first activation -------------------------
       if [ ! -f ${stateDir}/config.yaml ]; then
-        ${if cfg.bootstrapConfig != null then ''
-          cp ${cfg.bootstrapConfig} ${stateDir}/config.yaml
-        '' else ''
-          cp ${configFile} ${stateDir}/config.yaml
-        ''}
+        ${
+          if cfg.bootstrapConfig != null then
+            ''
+              cp ${cfg.bootstrapConfig} ${stateDir}/config.yaml
+            ''
+          else
+            ''
+              cp ${configFile} ${stateDir}/config.yaml
+            ''
+        }
         chmod 600 ${stateDir}/config.yaml
         ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
         printf '%s' '${configFile}' > ${stateDir}/.nix-gen
