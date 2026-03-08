@@ -6,16 +6,17 @@
 
 ## 特性
 
-- **完全声明式**: 通过原生的 Nix 模块选项直接管理代理端口、代理模式、局域网访问等核心配置。
-- **多订阅聚合**: 支持配置列表形式的多个订阅链接，系统会自动设定 systemd 定时任务将它们抓取并使用 `yq` 合并入运行时配置。
-- **独立的微型面板服务**: 面板资源将由专门的 `darkhttpd` (轻量级静态服务器) systemd 服务托管，与 Mihomo 进程边界隔离。
-- **TUN 模式下沉**: 透明代理级别的一键部署。
+- **完全声明式**：通过原生 Nix 选项管理代理端口、模式、局域网访问等核心配置。每次服务重启时，模块都会通过「Generation 追踪」机制自动重新应用 Nix 声明的配置，`nixos-rebuild` 后无需手动修改任何文件。
+- **多订阅智能合并**：支持配置多个订阅 URL。第一个 URL 的配置作为主配置（包含 proxy-groups、rules 等完整结构）；后续 URL 仅合并其 `proxies` 列表，彻底避免 proxy-group 重名冲突。
+- **独立面板微服务**：面板资源（Yacd / Metacubexd / Zashboard）由专用的 `darkhttpd` systemd 服务托管，与 Mihomo 进程边界隔离。三种面板的域名均已预置于 `external-controller-cors` 白名单，鉴权链接开箱即用，无 CORS 报错。
+- **安全的 TUN 透明代理**（NixOS）：开启 `tun.enable = true` 时，NixOS 模块会自动创建专用系统用户 `clashix`，并通过 Ambient Capabilities 授予 `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE`。Mihomo 永不以 root 身份运行。
+- **可配置 TUN 协议栈**：通过 `tun.stack` 选项在 `system`（默认）、`gvisor`、`mixed` 之间切换。
 
 ## 用法说明
 
 ### 1. 基于 Flake 的 NixOS 配置（推荐）
 
-首先你的 `flake.nix` 中引入模块：
+在 `flake.nix` 中引入模块：
 
 ```nix
 {
@@ -42,29 +43,38 @@
 programs.clashix = {
   enable = true;
 
-  # 核心代理配置
-  port = 7890;
+  # 核心代理端口
+  port      = 7890;
   socksPort = 7891;
   mixedPort = 7892;
-  allowLan = true;
-  mode = "Rule";
+  allowLan  = true;
+  mode      = "Rule";
 
-  # 面板配置 (由独立进程提供)
+  # 面板配置（由独立的 darkhttpd 进程提供）
   dashboard = {
-    enable = true;
-    type = "yacd"; # 可选: "none" (关闭面板), "yacd", "metacubexd", "zashboard"
-    port = 8080;
+    enable      = true;
+    type        = "yacd"; # "none" | "yacd" | "metacubexd" | "zashboard"
+    port        = 8080;
     bindAddress = "0.0.0.0";
   };
 
-  # 多订阅处理
+  # 控制器鉴权密钥 — 生产环境建议配合 sops-nix 或 agenix 管理
+  secret = "your-secret-here";
+
+  # 多订阅 — 第一个为主配置，其余仅合并 proxies
   subscriptionUrls = [
     "https://your.sub.link/1"
     "https://your.sub.link/2"
   ];
-  updateInterval = "daily"; # 定时更新频率
+  updateInterval = "daily";
 
-  # 其他需要合并到底层配置文件的参数
+  # TUN 透明代理（NixOS 下自动以专用用户 + Capabilities 运行，无需 root）
+  tun = {
+    enable = true;
+    stack  = "system"; # "system" | "gvisor" | "mixed"
+  };
+
+  # 额外合并到底层 YAML 配置的任意字段
   extraConfig = {
     ipv6 = false;
   };
@@ -73,91 +83,117 @@ programs.clashix = {
 
 ### 2. 基于 Flake 的 Home Manager 配置
 
-引用方式类似，在 `home.nix` 的 `modules` 中加入 `clashix.homeManagerModules.clashix` 即可。
+在 Home Manager 的 `modules` 列表中加入 `clashix.homeManagerModules.clashix`，其余配置与 NixOS 完全相同，服务以 Systemd User Service 的身份运行。
 
-其余配置与 NixOS 完全相同，服务将以 Systemd User Service 的身份挂在这个用户下。
+> **关于 TUN 透明代理的提示**：NixOS 模块会自动创建系统用户并授予网络特权；而在纯 Home Manager 环境中，用户服务默认不具备 `CAP_NET_ADMIN`，需手动处理：
+>
+> ```bash
+> mkdir -p ~/.local/bin
+> cp $(readlink -f $(which mihomo)) ~/.local/bin/mihomo-cap
+> sudo setcap 'cap_net_admin,cap_net_bind_service=+ep' ~/.local/bin/mihomo-cap
+> ```
+>
+> 然后在 `home.nix` 中指定该授权二进制：
+>
+> ```nix
+> programs.clashix = {
+>   enable     = true;
+>   tun.enable = true;
+>   package    = pkgs.writeShellScriptBin "mihomo" ''
+>     exec ~/.local/bin/mihomo-cap "$@"
+>   '';
+> };
+> ```
 
-*关于 TUN 透明代理的提示*：在非 NixOS 的纯 Home Manager 环境中，普通用户的 Systemd 服务默认没有接管路由表的特权 (`CAP_NET_ADMIN`)，直接开启 TUN 会导致崩溃。为了在不使用全局 root 的前提下无缝开启 TUN 模式，您可以为一份本地拷贝赋予网络特权：
-
-1. 拷贝二进制并赋予内核能力（仅需执行一次）：
-   ```bash
-   mkdir -p ~/.local/bin
-   cp $(readlink -f $(which mihomo)) ~/.local/bin/mihomo-cap
-   sudo setcap 'cap_net_admin,cap_net_bind_service=+ep' ~/.local/bin/mihomo-cap
-   ```
-
-2. 在您的 `home.nix` 中指定模块使用该授权文件：
-   ```nix
-   programs.clashix = {
-     enable = true;
-     tun.enable = true;
-     package = pkgs.writeShellScriptBin "mihomo" ''
-       exec ~/.local/bin/mihomo-cap "$@"
-     '';
-     # ... 其它配置
-   };
-   ```
-
-### 3. 非 Flake 环境下的 NixOS (使用 fetchTarball)
-
-在你的配置文件中，直接通过外部源码引用：
+### 3. 非 Flake 环境下的 NixOS（使用 fetchTarball）
 
 ```nix
 { config, pkgs, ... }:
 let
-  clashix = fetchTarball "https://github.com/yourname/clashix/archive/main.tar.gz";
+  clashix = fetchTarball "https://github.com/DawnMagnet/clashix/archive/main.tar.gz";
 in
 {
   imports = [ "${clashix}/modules/nixos" ];
-
-  programs.clashix = {
-    enable = true;
-    dashboard.type = "metacubexd";
-    # ... 配置其它项
-  };
+  programs.clashix.enable = true;
+  # ... 配置其它项
 }
 ```
 
 ### 4. 非 Flake 环境下的 Home Manager
 
-相似的导入方式：
-
 ```nix
 { config, pkgs, ... }:
 let
-  clashix = fetchTarball "https://github.com/yourname/clashix/archive/main.tar.gz";
+  clashix = fetchTarball "https://github.com/DawnMagnet/clashix/archive/main.tar.gz";
 in
 {
   imports = [ "${clashix}/modules/home-manager" ];
-
   programs.clashix.enable = true;
 }
 ```
 
 ### 5. Nix Shell 支持（即插即用环境）
 
-您可以在不安装模块的情况下，通过 Nix Shell 直接进入一个预配置好代理和面板的环境。这非常适合临时测试或 CI/CD 环境。
+无需安装模块，直接通过 Nix Shell 进入一个预配置好代理和面板的临时环境，适合快速测试或 CI/CD。
 
 > [!NOTE]
-> **注意**：设置环境变量（如 `http_proxy` 等）的功能**仅**在 `nix-shell` 或 `nix develop` 交互式环境中生效。在 NixOS 或 Home Manager 正常安装后，为了系统整洁，我们不会默认注入全局环境变量。
+> **注意**：代理环境变量（`http_proxy` 等）**仅**在 `nix-shell` / `nix develop` 交互式环境中自动导出，NixOS / Home Manager 正常安装时不会注入全局环境变量。
 
-#### 使用 nix-shell
-直接进入默认配置环境：
-```bash
-nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz
-```
+#### 使用 nix develop（Flakes）
 
-传入订阅链接：
-```bash
-nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz --arg subscriptionUrls '["https://example.com/sub"]'
-```
-
-#### 使用 Flakes (nix develop)
 ```bash
 nix develop github:DawnMagnet/clashix
 ```
 
+#### 使用 nix-shell（经典）
+
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz
+```
+
 进入环境后：
-- `mihomo` 指向的代理核心和 `darkhttpd` 面板服务将在后台启动。
-- `http_proxy`, `https_proxy`, 和 `all_proxy` 会自动 export 到当前终端。
-- 退出 Shell 时，相关后台进程和临时目录会自动清理。
+
+- Mihomo 代理核心与面板（darkhttpd）在后台以随机一次性密钥启动。
+- `http_proxy`、`https_proxy`、`all_proxy` 自动 export 到当前终端。
+- 终端输出的**鉴权链接（Login URL）**已内嵌生成的密钥，直接粘贴到浏览器即可登录面板。
+- 退出 Shell 后，所有后台进程和临时目录自动清理。
+
+## 面板鉴权链接
+
+设置 `secret` 后，面板 UI 通过以下格式的 URL 连接至控制器：
+
+```text
+http://<面板地址>:<面板端口>/#/setup?hostname=<绑定地址>&port=<控制器端口>&secret=<密钥>
+```
+
+Clashix 已将 Yacd、Metacubexd、Zashboard 三个面板域名统一预置到 `external-controller-cors` 白名单，浏览器从面板页面向控制器发起的跨域请求可以正常通过，无需任何额外配置。
+
+## NixOS vs Home Manager 对比
+
+| 能力 | NixOS 模块 | Home Manager 模块 |
+| --- | --- | --- |
+| 专用系统用户运行 | 是（自动创建 `clashix` 用户和组） | 否（以当前用户身份运行） |
+| TUN 模式（CAP_NET_ADMIN） | 自动通过 Ambient Capabilities 授予 | 需手动 `setcap` |
+| 配置 Generation 追踪 | 是（preStart 钩子） | 是（activation 脚本） |
+| 订阅定时自动更新 | systemd 系统级 timer | systemd 用户级 timer |
+
+## 测试
+
+项目附带 10 个相互独立的 NixOS VM 测试，可单独运行：
+
+```bash
+nix build .#checks.x86_64-linux.<test-name>
+```
+
+| 测试名 | 验证内容 |
+| --- | --- |
+| `basicTest` | 默认配置、5 个端口全部开放、面板 HTML、REST API JSON |
+| `portsAndSecretTest` | 自定义端口、控制器 HTTP 401/200 鉴权 |
+| `dashboardTypesTest` | `type=none` 不启动服务；`type=yacd` 正常返回 HTML |
+| `subscriptionTest` | 端到端：mock 服务器 → xh GET → 代理合并入配置，Nix 设置保留 |
+| `multiSubscriptionTest` | 两个订阅：两个代理均出现，`proxy-groups` 不重复 |
+| `tunTest` | `clashix` 用户/组存在，unit 文件含 `User=clashix` + `CAP_NET_ADMIN` |
+| `tunStackTest` | `tun.stack = "gvisor"` 出现在 `config.yaml` 中 |
+| `generationTest` | 损坏 `.nix-gen` → 重启 → preStart 重新应用 Nix overlay |
+| `dashboardAuthTest` | 面板 HTML 无需鉴权；控制器 401/200；`/proxies`、`/configs`、`/version` 返回 JSON；CORS 白名单允许/拒绝 |
+| `allowLanTest` | `allowLan=true` 绑定 `*:7890`；`allowLan=false` 绑定 `127.0.0.1:7890` |
