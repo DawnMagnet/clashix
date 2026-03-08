@@ -21,7 +21,7 @@ let
     };
     geosite = pkgs.fetchurl {
       url = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat";
-      sha256 = "18jnzaplid44pf6dpy8mhkjl5psy0v9aqcq9fc0vy3cdv1n7js3p";
+      sha256 = "15dgz79pb9vx2hs4shyc7c2l6gdizzl40zn351pdm42sj3zyhjii";
     };
   };
 
