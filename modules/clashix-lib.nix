@@ -8,24 +8,39 @@ let
     optional
     ;
 
-  # Pre-bundled geodata fetched via jsDelivr CDN.
-  # Copied into STATE_DIR before mihomo starts so it never needs to download them.
-  geodataFiles = {
-    mmdb = pkgs.fetchurl {
-      url = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb";
-      sha256 = "0xnsgpxlpqzlf2mpg6gy2ha4cql4lcld2zhjbl4ilrrl9mbcqcvr";
-    };
-    geoip = pkgs.fetchurl {
-      url = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat";
-      sha256 = "0jxhaihblyh07jwhv5sb3pv5k0jg4516ssdkq9r24mldp65chzaz";
-    };
-    geosite = pkgs.fetchurl {
-      url = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat";
-      sha256 = "15dgz79pb9vx2hs4shyc7c2l6gdizzl40zn351pdm42sj3zyhjii";
-    };
-  };
+  # Pinned commit from the MetaCubeX/meta-rules-dat `release` branch.
+  # Update this to the latest commit SHA (and re-run nix-prefetch-url for each
+  # file) whenever you want fresher geodata:
+  #   commit=$(curl -sf https://api.github.com/repos/MetaCubeX/meta-rules-dat/commits/release?per_page=1 | jq -r '.sha')
+  #   nix-prefetch-url "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@$commit/country.mmdb"
+  #   nix-prefetch-url "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@$commit/geoip.dat"
+  #   nix-prefetch-url "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@$commit/geosite.dat"
+  geodataCommit = "1c226b9bc39840a9740d227b10d836a2ac2b471a"; # 2026-03-07
 
-  # jsDelivr CDN URLs for geodata updates (used by mihomo when updating geodata at runtime)
+  # Pre-bundled geodata pinned to geodataCommit via jsDelivr CDN.
+  # Copied into STATE_DIR before mihomo starts so it never needs to download them.
+  geodataFiles =
+    let
+      base = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@${geodataCommit}";
+    in
+    {
+      mmdb = pkgs.fetchurl {
+        url = "${base}/country.mmdb";
+        sha256 = "05bwx1n91c6m5qhbgzg5lc3vx3a01kbcysgibx36nnbz7437bx04";
+      };
+      geoip = pkgs.fetchurl {
+        url = "${base}/geoip.dat";
+        sha256 = "0kys3mg0277adyiyajfawc010k1an40hh6ha7wq0q7f30lk2vjap";
+      };
+      geosite = pkgs.fetchurl {
+        url = "${base}/geosite.dat";
+        sha256 = "15dgz79pb9vx2hs4shyc7c2l6gdizzl40zn351pdm42sj3zyhjii";
+      };
+    };
+
+  # jsDelivr CDN URLs for geodata updates used by mihomo at runtime.
+  # These intentionally stay floating (@release) so mihomo can pull
+  # fresh data without a Nix rebuild.
   geoxUrls = {
     mmdb = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb";
     geoip = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat";

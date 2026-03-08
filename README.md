@@ -148,24 +148,55 @@ Enter a fully working proxy + dashboard environment without installing anything 
 > [!NOTE]
 > Proxy environment variables (`http_proxy`, `https_proxy`, `all_proxy`) are **only** exported automatically inside these shell environments, not by the NixOS/Home Manager modules during a normal system activation.
 
-#### Using nix develop (Flakes)
-
-```bash
-nix develop github:DawnMagnet/clashix
-```
-
 #### Using nix-shell (classic)
+
+**No subscription — built-in config only:**
 
 ```bash
 nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz
 ```
 
-Upon entering the shell:
+**With one subscription URL:**
 
-- Mihomo and the dashboard (darkhttpd) start in the background with a random one-time secret.
-- `http_proxy`, `https_proxy`, and `all_proxy` are automatically exported.
-- The printed **Login URL** embeds the generated secret — paste it in your browser to connect immediately.
-- Everything (processes, temp files) is cleaned up when you exit the shell.
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz \
+  --arg subscriptionUrls '["https://your.provider.com/sub?token=xxx"]'
+```
+
+**With multiple subscription URLs:**
+
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz \
+  --arg subscriptionUrls '["https://provider1.com/sub", "https://provider2.com/sub"]'
+```
+
+#### Using nix develop (Flakes)
+
+The flake dev shell uses a built-in default config (no subscription, Zashboard dashboard). Argument passing is not supported by `nix develop`; use `nix-shell` above if you need to supply subscription URLs.
+
+```bash
+nix develop github:DawnMagnet/clashix
+```
+
+#### What happens when you enter
+
+Once the shell is ready, you will see output similar to:
+
+```text
+--- Updating subscriptions ---
+Fetching https://your.provider.com/sub?token=xxx...
+
+--- Clashix Active ---
+Proxy:      socks5://127.0.0.1:7891
+Dashboard:  http://127.0.0.1:8080
+Login URL:  http://127.0.0.1:8080/#/setup?hostname=127.0.0.1&port=9090&secret=<generated>
+Logs:       /tmp/clashix-shell.XXXXXX/mihomo.log
+Tip:        Type 'exit' or Ctrl+D to stop all services.
+```
+
+- Open the **Login URL** directly in your browser — it pre-fills the controller address and secret so you land on the dashboard immediately.
+- `http_proxy`, `https_proxy`, and `all_proxy` are exported in the shell, so tools like `curl`, `git`, `wget` use the proxy automatically.
+- Type `exit` or press `Ctrl+D` to stop all services and clean up temp files.
 
 ## Dashboard Auth Link
 

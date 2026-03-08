@@ -139,24 +139,55 @@ in
 > [!NOTE]
 > **注意**：代理环境变量（`http_proxy` 等）**仅**在 `nix-shell` / `nix develop` 交互式环境中自动导出，NixOS / Home Manager 正常安装时不会注入全局环境变量。
 
-#### 使用 nix develop（Flakes）
-
-```bash
-nix develop github:DawnMagnet/clashix
-```
-
 #### 使用 nix-shell（经典）
+
+**不使用订阅，仅使用内置默认配置：**
 
 ```bash
 nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz
 ```
 
-进入环境后：
+**传入单个订阅链接：**
 
-- Mihomo 代理核心与面板（darkhttpd）在后台以随机一次性密钥启动。
-- `http_proxy`、`https_proxy`、`all_proxy` 自动 export 到当前终端。
-- 终端输出的**鉴权链接（Login URL）**已内嵌生成的密钥，直接粘贴到浏览器即可登录面板。
-- 退出 Shell 后，所有后台进程和临时目录自动清理。
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz \
+  --arg subscriptionUrls '["https://your.provider.com/sub?token=xxx"]'
+```
+
+**传入多个订阅链接：**
+
+```bash
+nix-shell https://github.com/DawnMagnet/clashix/archive/main.tar.gz \
+  --arg subscriptionUrls '["https://provider1.com/sub", "https://provider2.com/sub"]'
+```
+
+#### 使用 nix develop（Flakes）
+
+Flake 的 devShell 使用内置默认配置（无订阅，Zashboard 面板）。`nix develop` 不支持传递参数；如需传入订阅链接，请使用上方的 `nix-shell` 方式。
+
+```bash
+nix develop github:DawnMagnet/clashix
+```
+
+#### 进入环境后
+
+Shell 就绪后，终端会输出类似以下内容：
+
+```text
+--- Updating subscriptions ---
+Fetching https://your.provider.com/sub?token=xxx...
+
+--- Clashix Active ---
+Proxy:      socks5://127.0.0.1:7891
+Dashboard:  http://127.0.0.1:8080
+Login URL:  http://127.0.0.1:8080/#/setup?hostname=127.0.0.1&port=9090&secret=<自动生成>
+Logs:       /tmp/clashix-shell.XXXXXX/mihomo.log
+Tip:        Type 'exit' or Ctrl+D to stop all services.
+```
+
+- 直接在浏览器中打开 **Login URL**，控制器地址和密钥已预填，点击即可进入面板。
+- 当前终端已自动设置 `http_proxy`、`https_proxy`、`all_proxy`，`curl`、`git`、`wget` 等工具直接走代理。
+- 输入 `exit` 或按 `Ctrl+D` 退出，所有后台进程和临时目录自动清理。
 
 ## 面板鉴权链接
 
