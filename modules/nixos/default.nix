@@ -81,22 +81,55 @@ in
         );
 
       # Generation-aware initialisation:
-      #  1. Create config.yaml from the Nix store on first start.
-      #  2. On subsequent starts after a nixos-rebuild, re-apply the Nix
-      #     overlay so port/mode/controller changes take effect immediately
-      #     without waiting for the next subscription timer tick.
-      #     The Nix store path of configFile changes whenever the evaluated
-      #     config changes, so we use it as a cheap generation marker.
+      #  1. On first boot: seed config.yaml from bootstrapConfig (if provided)
+      #     or the Nix-generated skeleton, then immediately overlay Nix settings.
+      #  2. On every subsequent nixos-rebuild: re-apply the overlay whenever the
+      #     evaluated config changes (configFile store-path acts as a generation
+      #     marker). Port/mode/controller changes take effect without waiting for
+      #     the subscription timer.
+      #  3. Pre-populate geodata from the Nix store so mihomo never needs to
+      #     download country.mmdb / geoip.dat / geosite.dat on first boot.
       preStart = ''
+        # --- 1. Bootstrap config.yaml on first boot --------------------------------
         if [ ! -f ${stateDir}/config.yaml ]; then
-          cp ${configFile} ${stateDir}/config.yaml
+          ${if cfg.bootstrapConfig != null then ''
+            cp ${cfg.bootstrapConfig} ${stateDir}/config.yaml
+          '' else ''
+            cp ${configFile} ${stateDir}/config.yaml
+          ''}
           chmod 600 ${stateDir}/config.yaml
+          # Overlay Nix-controlled settings immediately so ports/controller are
+          # correct from the very first start, regardless of what the seeded file
+          # contained.
+          ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
+          # Record the generation marker so step 2 below is a no-op this boot.
+          printf '%s' '${configFile}' > ${stateDir}/.nix-gen
         fi
 
-        NIX_GEN_MARKER="${configFile}"
+        # --- 2. Re-apply overlay on generation change --------------------------------
+        NIX_GEN_MARKER='${configFile}'
         if [ "$(cat ${stateDir}/.nix-gen 2>/dev/null)" != "$NIX_GEN_MARKER" ]; then
           ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
           printf '%s' "$NIX_GEN_MARKER" > ${stateDir}/.nix-gen
+        fi
+
+        # --- 3. Seed geodata from the Nix store (no network needed on first boot) ---
+        if [ ! -f ${stateDir}/country.mmdb ]; then
+          cp ${clashixLib.geodataFiles.mmdb} ${stateDir}/country.mmdb
+          chmod 644 ${stateDir}/country.mmdb
+        fi
+        # Also provide the alternative name used by some mihomo versions.
+        if [ ! -f ${stateDir}/geoip.metadb ]; then
+          cp ${clashixLib.geodataFiles.mmdb} ${stateDir}/geoip.metadb
+          chmod 644 ${stateDir}/geoip.metadb
+        fi
+        if [ ! -f ${stateDir}/geoip.dat ]; then
+          cp ${clashixLib.geodataFiles.geoip} ${stateDir}/geoip.dat
+          chmod 644 ${stateDir}/geoip.dat
+        fi
+        if [ ! -f ${stateDir}/geosite.dat ]; then
+          cp ${clashixLib.geodataFiles.geosite} ${stateDir}/geosite.dat
+          chmod 644 ${stateDir}/geosite.dat
         fi
       '';
     };

@@ -43,19 +43,49 @@ in
     '';
 
     # Generation-aware initialisation (mirrors the NixOS preStart logic).
-    # On every Home Manager switch: create config.yaml if absent, then
-    # re-apply the Nix overlay whenever the evaluated config changes.
+    # 1. Bootstrap config.yaml from bootstrapConfig (if set) or the generated
+    #    skeleton on first activation, overlaying Nix settings immediately.
+    # 2. Re-apply overlay on every generation change.
+    # 3. Pre-populate geodata from the Nix store so mihomo never needs to
+    #    download the files at runtime.
     home.activation.setupClashixConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       mkdir -p ${stateDir}
+
+      # --- 1. Bootstrap config.yaml on first activation -------------------------
       if [ ! -f ${stateDir}/config.yaml ]; then
-        cp ${configFile} ${stateDir}/config.yaml
+        ${if cfg.bootstrapConfig != null then ''
+          cp ${cfg.bootstrapConfig} ${stateDir}/config.yaml
+        '' else ''
+          cp ${configFile} ${stateDir}/config.yaml
+        ''}
         chmod 600 ${stateDir}/config.yaml
+        ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
+        printf '%s' '${configFile}' > ${stateDir}/.nix-gen
       fi
 
-      NIX_GEN_MARKER="${configFile}"
+      # --- 2. Re-apply overlay on generation change -----------------------------
+      NIX_GEN_MARKER='${configFile}'
       if [ "$(cat ${stateDir}/.nix-gen 2>/dev/null)" != "$NIX_GEN_MARKER" ]; then
         ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
         printf '%s' "$NIX_GEN_MARKER" > ${stateDir}/.nix-gen
+      fi
+
+      # --- 3. Seed geodata from the Nix store -----------------------------------
+      if [ ! -f ${stateDir}/country.mmdb ]; then
+        cp ${clashixLib.geodataFiles.mmdb} ${stateDir}/country.mmdb
+        chmod 644 ${stateDir}/country.mmdb
+      fi
+      if [ ! -f ${stateDir}/geoip.metadb ]; then
+        cp ${clashixLib.geodataFiles.mmdb} ${stateDir}/geoip.metadb
+        chmod 644 ${stateDir}/geoip.metadb
+      fi
+      if [ ! -f ${stateDir}/geoip.dat ]; then
+        cp ${clashixLib.geodataFiles.geoip} ${stateDir}/geoip.dat
+        chmod 644 ${stateDir}/geoip.dat
+      fi
+      if [ ! -f ${stateDir}/geosite.dat ]; then
+        cp ${clashixLib.geodataFiles.geosite} ${stateDir}/geosite.dat
+        chmod 644 ${stateDir}/geosite.dat
       fi
     '';
 

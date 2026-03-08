@@ -156,5 +156,34 @@ with lib;
       default = { };
       description = "Extra verbatim Mihomo configuration to merge into the generated config.yaml.";
     };
+
+    bootstrapConfig = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression ''
+        pkgs.fetchurl {
+          url  = "https://example.com/my-subscription";
+          sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        }
+      '';
+      description = ''
+        An optional path (or fixed-output <literal>pkgs.fetchurl</literal>
+        derivation) to use as the initial <filename>config.yaml</filename> on
+        first boot, instead of the minimal Nix-generated skeleton.
+
+        This solves the chicken-and-egg problem where the machine needs a
+        working proxy config to reach the internet in order to fetch its own
+        subscription.  Supply a pre-fetched snapshot here (built into the
+        system closure at <command>nixos-rebuild</command> time) so the proxy
+        is usable from the very first boot.
+
+        All Nix-controlled settings (ports, controller address, secret, …) are
+        overlaid on top of the file after it is copied, so you do not need to
+        keep those in sync manually.
+
+        On subsequent boots the file is left untouched; the subscription timer
+        will refresh it as usual.
+      '';
+    };
   };
 }
