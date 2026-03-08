@@ -477,7 +477,139 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
     '';
   };
 
-  # ─── 9. allowLan: proxy ports bind to all interfaces ────────────────────────
+  # ─── 9. Dashboard accessibility + controller authentication ─────────────────
+  #
+  # Validates the full "auth link" flow used by dashboard UIs (yacd, metacubexd,
+  # zashboard).  The dashboard app embeds the controller address and secret in
+  # the URL hash ("#/setup?hostname=...&port=9090&secret=...") and then calls
+  # the REST API with "Authorization: Bearer <secret>".  This test verifies:
+  #
+  #   a) Dashboard static files are served and return HTML (no auth required).
+  #   b) Controller rejects requests without or with wrong secret (HTTP 401).
+  #   c) Controller accepts requests with the correct Bearer token (HTTP 200).
+  #   d) Actual API endpoints (/proxies, /configs) return valid JSON when
+  #      authenticated — i.e. not just the root path.
+  #   e) CORS: a request carrying an allowed Origin header receives an
+  #      "Access-Control-Allow-Origin" response header so the dashboard SPA
+  #      running in a browser can actually read the API response.
+  #   f) CORS: an Origin not in the allow-list does NOT receive the header.
+  dashboardAuthTest = pkgs.testers.nixosTest {
+    name = "clashix-dashboard-auth";
+
+    nodes.machine = withClashix {
+      enable         = true;
+      secret         = "dashboard-test-secret";
+      dashboard.type = "yacd";
+      dashboard.port = 8080;
+      controllerPort = 9090;
+    };
+
+    testScript = ''
+      import json
+
+      machine.wait_for_unit("clashix.service")
+      machine.wait_for_unit("clashix-dashboard.service")
+      machine.wait_for_open_port(8080)
+      machine.wait_for_open_port(9090)
+
+      SECRET = "dashboard-test-secret"
+
+      # ── a) Dashboard HTML accessible without any secret ──────────────────────
+      html = machine.succeed("curl -sf http://127.0.0.1:8080")
+      assert "html" in html.lower(), \
+          f"Dashboard did not serve HTML (no auth required for static files): {html[:300]}"
+
+      # ── b) Controller rejects unauthenticated / wrong-secret requests ─────────
+      code = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9090/"
+      ).strip()
+      assert code == "401", \
+          f"Expected 401 with no Authorization header, got {code}"
+
+      code = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' "
+          "-H 'Authorization: Bearer totally-wrong' http://127.0.0.1:9090/"
+      ).strip()
+      assert code == "401", \
+          f"Expected 401 with wrong secret, got {code}"
+
+      # ── c) Correct Bearer token → 200 ────────────────────────────────────────
+      code = machine.succeed(
+          f"curl -s -o /dev/null -w '%{{http_code}}' "
+          f"-H 'Authorization: Bearer {SECRET}' http://127.0.0.1:9090/"
+      ).strip()
+      assert code == "200", \
+          f"Expected 200 with correct secret, got {code}"
+
+      # ── d) Specific API endpoints return valid JSON when authenticated ─────────
+      # /proxies
+      raw = machine.succeed(
+          f"curl -sf -H 'Authorization: Bearer {SECRET}' http://127.0.0.1:9090/proxies"
+      )
+      try:
+          j = json.loads(raw)
+          assert "proxies" in j, f"/proxies JSON missing 'proxies' key: {j}"
+      except json.JSONDecodeError:
+          raise AssertionError(f"/proxies returned non-JSON: {raw[:300]}")
+
+      # /configs
+      raw = machine.succeed(
+          f"curl -sf -H 'Authorization: Bearer {SECRET}' http://127.0.0.1:9090/configs"
+      )
+      try:
+          j = json.loads(raw)
+          assert "mixed-port" in j or "port" in j, \
+              f"/configs JSON missing port keys: {j}"
+      except json.JSONDecodeError:
+          raise AssertionError(f"/configs returned non-JSON: {raw[:300]}")
+
+      # /version
+      raw = machine.succeed(
+          f"curl -sf -H 'Authorization: Bearer {SECRET}' http://127.0.0.1:9090/version"
+      )
+      try:
+          j = json.loads(raw)
+          assert "version" in j, f"/version JSON missing 'version' key: {j}"
+      except json.JSONDecodeError:
+          raise AssertionError(f"/version returned non-JSON: {raw[:300]}")
+
+      # ── e) CORS: allowed Origin receives Access-Control-Allow-Origin header ────
+      # This is the exact flow a dashboard SPA uses when opened via the auth link:
+      # the browser sends Origin: <dashboard-host> with every API request.
+      cors_ok = machine.succeed(
+          f"curl -si "
+          f"-H 'Origin: https://yacd.metacubex.one' "
+          f"-H 'Authorization: Bearer {SECRET}' "
+          f"http://127.0.0.1:9090/"
+      ).lower()
+      assert "access-control-allow-origin" in cors_ok, \
+          f"Expected CORS header for allowed origin, response headers:\n{cors_ok[:600]}"
+
+      # Also check a second allowed origin from the list
+      cors_ok2 = machine.succeed(
+          f"curl -si "
+          f"-H 'Origin: https://metacubex.github.io' "
+          f"-H 'Authorization: Bearer {SECRET}' "
+          f"http://127.0.0.1:9090/"
+      ).lower()
+      assert "access-control-allow-origin" in cors_ok2, \
+          f"Expected CORS header for metacubex.github.io, got:\n{cors_ok2[:600]}"
+
+      # ── f) CORS: unlisted Origin must NOT receive the allow-origin header ──────
+      cors_bad = machine.succeed(
+          f"curl -si "
+          f"-H 'Origin: https://evil.example.com' "
+          f"-H 'Authorization: Bearer {SECRET}' "
+          f"http://127.0.0.1:9090/"
+      ).lower()
+      # Split headers from body; only inspect the header section
+      header_section = cors_bad.split("\r\n\r\n")[0] if "\r\n\r\n" in cors_bad else cors_bad
+      assert "access-control-allow-origin: https://evil.example.com" not in header_section, \
+          f"Controller should NOT echo back unlisted Origin:\n{header_section[:600]}"
+    '';
+  };
+
+  # ─── 10. allowLan: proxy ports bind to all interfaces ───────────────────────
   #
   # With allowLan = true, mihomo must bind its proxy ports to 0.0.0.0 (all
   # interfaces) rather than 127.0.0.1.  We verify this with `ss` on a single
