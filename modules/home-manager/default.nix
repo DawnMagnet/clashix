@@ -10,49 +10,56 @@ with lib;
 let
   cfg = config.programs.clashix;
 
-  # Import options, passing isHomeManager = true
-  sharedOptions = import ../shared.nix {
-    inherit lib pkgs config;
-    isHomeManager = true;
-  };
+  sharedOptions = import ../shared.nix { inherit lib pkgs; };
 
   clashixLib = import ../clashix-lib.nix { inherit lib pkgs; };
 
   dashboardPath = clashixLib.getDashboardPath cfg;
 
-  # Base generated configuration
+  # Base generated configuration — serialised as proper YAML (not JSON)
   finalConfig = clashixLib.mkClashConfig cfg;
+  configFile = (pkgs.formats.yaml { }).generate "clashix-config.yaml" finalConfig;
 
-  configFile = pkgs.writeText "clashix-config.yaml" (builtins.toJSON finalConfig);
+  # yq overlay expression shared with activation script
+  overlayExpr = clashixLib.mkOverlayExpr cfg;
 
-  # stateDir for Home Manager (typically ~/.config/clashix or ~/.local/state/clashix)
-  # We use the XDG state home
+  # stateDir for Home Manager: follows XDG state convention
   stateDir = "${config.xdg.stateHome}/clashix";
-
-  # Warning for HM users trying to use TUN
-  tunWarning = lib.optionalString cfg.tun.enable ''
-    Clashix TUN mode is enabled within Home Manager.
-    Since user services lack 'CAP_NET_ADMIN' capabilities by default, Mihomo will likely crash when starting TUN.
-    It is highly recommended to use the NixOS module for TUN mode instead.
-  '';
 
 in
 {
   options.programs.clashix = sharedOptions.options.programs.clashix;
 
   config = mkIf cfg.enable {
-    warnings = [ tunWarning ];
 
-    # Pre-create state directory and basic config for HM
+    # Warn only when TUN is actually requested — an empty string in warnings
+    # can silently produce a spurious blank warning entry.
+    warnings = optional cfg.tun.enable ''
+      Clashix TUN mode is enabled within Home Manager.
+      Since user services lack 'CAP_NET_ADMIN' capabilities by default, Mihomo
+      will likely crash when starting TUN.
+      Use the NixOS module instead, or wrap the binary with:
+        sudo setcap 'cap_net_admin,cap_net_bind_service=+ep' $(readlink -f ${cfg.package}/bin/mihomo)
+    '';
+
+    # Generation-aware initialisation (mirrors the NixOS preStart logic).
+    # On every Home Manager switch: create config.yaml if absent, then
+    # re-apply the Nix overlay whenever the evaluated config changes.
     home.activation.setupClashixConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       mkdir -p ${stateDir}
       if [ ! -f ${stateDir}/config.yaml ]; then
         cp ${configFile} ${stateDir}/config.yaml
         chmod 600 ${stateDir}/config.yaml
       fi
+
+      NIX_GEN_MARKER="${configFile}"
+      if [ "$(cat ${stateDir}/.nix-gen 2>/dev/null)" != "$NIX_GEN_MARKER" ]; then
+        ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
+        printf '%s' "$NIX_GEN_MARKER" > ${stateDir}/.nix-gen
+      fi
     '';
 
-    # 1. Provide the main Systemd User service for Mihomo
+    # 1. Main Mihomo user service
     systemd.user.services.clashix = {
       Unit = {
         Description = "Mihomo daemon (programs.clashix via Home Manager)";
@@ -60,31 +67,30 @@ in
         Wants = [ "network-online.target" ];
       };
 
-      Install = {
-        WantedBy = [ "default.target" ];
-      };
+      Install.WantedBy = [ "default.target" ];
 
       Service = {
         ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
         ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
-        # Note: TUN mode under User Services is generally problematic without wrappers or CAP_NET_ADMIN.
-        # See the warnings generated when tun.enable = true.
+        # Note: TUN mode under user services is problematic — see warnings above.
       };
     };
 
+    # 2. Web dashboard (darkhttpd)
     systemd.user.services.clashix-dashboard =
       mkIf (cfg.dashboard.enable && cfg.dashboard.type != "none")
         {
           Unit = {
-            Description = "Clashix Web Dashboard Service (darkhttpd, User)";
-            After = [ "network-online.target" ];
+            Description = "Clashix Web Dashboard (darkhttpd, user)";
+            After = [
+              "network-online.target"
+              "clashix.service"
+            ];
             Wants = [ "network-online.target" ];
           };
 
-          Install = {
-            WantedBy = [ "default.target" ];
-          };
+          Install.WantedBy = [ "default.target" ];
 
           Service = {
             ExecStart = "${pkgs.darkhttpd}/bin/darkhttpd ${dashboardPath} --port ${toString cfg.dashboard.port} --addr ${cfg.dashboard.bindAddress}";
@@ -92,36 +98,34 @@ in
           };
         };
 
-    # 2. Provide the Subscription Update Timer and Service for User
+    # 3. Subscription update service + timer
     systemd.user.services.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {
       Unit = {
-        Description = "Update Clashix Subscriptions (User)";
-        After = [ "network-online.target" ];
+        Description = "Update Clashix subscriptions (user)";
+        After = [
+          "network-online.target"
+          "clashix.service"
+        ];
       };
 
       Service = {
         Type = "oneshot";
-        ExecStart = "${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml";
+        ExecStart = "${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml ${cfg.secret}";
         ExecStopPost = pkgs.writeShellScript "clashix-post-update-hm" ''
-          echo "Reloading user clashix service..."
           ${pkgs.systemd}/bin/systemctl --user reload clashix.service || true
         '';
       };
     };
 
     systemd.user.timers.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {
-      Unit = {
-        Description = "Timer to update Clashix subscriptions (User)";
-      };
+      Unit.Description = "Timer to update Clashix subscriptions (user)";
 
       Timer = {
         OnCalendar = cfg.updateInterval;
         Persistent = true;
       };
 
-      Install = {
-        WantedBy = [ "timers.target" ];
-      };
+      Install.WantedBy = [ "timers.target" ];
     };
 
   };

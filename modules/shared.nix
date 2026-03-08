@@ -1,10 +1,4 @@
-{
-  lib,
-  pkgs,
-  config,
-  isHomeManager ? false,
-  ...
-}:
+{ lib, pkgs, ... }:
 
 with lib;
 {
@@ -46,6 +40,21 @@ with lib;
         default = false;
         description = "Enable TUN mode for transparent proxying.";
       };
+
+      stack = mkOption {
+        type = types.enum [
+          "system"
+          "gvisor"
+          "mixed"
+        ];
+        default = "system";
+        description = ''
+          TUN stack implementation.
+          - "system": uses the kernel network stack (lowest overhead, recommended)
+          - "gvisor": uses the gVisor userspace stack (better isolation)
+          - "mixed": system stack for TCP, gVisor for UDP
+        '';
+      };
     };
 
     dashboard = {
@@ -75,7 +84,7 @@ with lib;
       bindAddress = mkOption {
         type = types.str;
         default = "127.0.0.1";
-        description = "The bind address for the darkhttpd web server.";
+        description = "The bind address for the darkhttpd web server and the external controller.";
       };
     };
 
@@ -106,7 +115,12 @@ with lib;
     secret = mkOption {
       type = types.str;
       default = "";
-      description = "Secret for the external controller API.";
+      description = ''
+        Secret for the external controller API.
+        Leave empty to auto-generate a random secret at runtime (shell mode only).
+        For NixOS/Home Manager deployments, set an explicit secret or manage it
+        via a secrets manager (e.g. sops-nix, agenix) and pass the value here.
+      '';
     };
 
     allowLan = mkOption {

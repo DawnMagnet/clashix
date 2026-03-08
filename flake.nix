@@ -16,6 +16,7 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
+        lib = pkgs.lib;
       in
       {
         # 自定义包导出
@@ -38,30 +39,9 @@
           in
           clashixLib.mkShell { };
 
-        # 测试用例
-        checks = {
-          vmTest = pkgs.testers.nixosTest {
-            name = "clashix-test";
-            nodes.machine =
-              { ... }:
-              {
-                imports = [ self.nixosModules.default ];
-                programs.clashix = {
-                  enable = true;
-                  dashboard.type = "yacd";
-                };
-              };
-            testScript = ''
-              machine.wait_for_unit("clashix.service")
-              machine.wait_for_unit("clashix-dashboard.service")
-              machine.wait_for_open_port(8080)
-              machine.wait_for_open_port(9090)
-
-              response = machine.succeed("curl -s http://127.0.0.1:8080")
-              assert "html" in response.lower(), "Dashboard did not return HTML"
-            '';
-          };
-        };
+        # 测试用例 — 每个 check 独立运行，可通过以下命令单独执行：
+        #   nix build .#checks.x86_64-linux.<test-name>
+        checks = import ./checks { inherit self pkgs lib; };
       }
     )
     // {

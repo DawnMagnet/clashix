@@ -5,6 +5,7 @@ let
     optionalAttrs
     recursiveUpdate
     optionalString
+    optional
     ;
 
   # Pre-bundled geodata fetched via jsDelivr CDN.
@@ -31,6 +32,21 @@ let
     geosite = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat";
     asn = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb";
   };
+
+  # Canonical CORS allow-origins list.
+  # Single source of truth — used in both mkClashConfig (no-subscription path)
+  # and mkOverlayExpr (subscription path), keeping them in sync.
+  corsOrigins = [
+    "https://yacd.metacubex.one"
+    "https://metacubex.github.io"
+    "https://board.zash.run.place"
+  ];
+
+  # Inline CORS list as a yq-compatible JSON array literal
+  corsOriginsYq =
+    "["
+    + lib.concatStringsSep "," (map (o: "\"${o}\"") corsOrigins)
+    + "]";
 
   # Select the correct dashboard package based on config
   getDashboardPkg =
@@ -64,11 +80,7 @@ let
         log-level = cfg.logLevel;
         external-controller = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}";
         external-controller-cors = {
-          allow-origins = [
-            "https://yacd.metacubex.one"
-            "https://metacubex.github.io"
-            "https://board.zash.run.place"
-          ];
+          allow-origins = corsOrigins;
           allow-private-network = true;
         };
         secret = cfg.secret;
@@ -78,13 +90,38 @@ let
       // (optionalAttrs cfg.tun.enable {
         tun = {
           enable = true;
-          stack = "system";
+          stack = cfg.tun.stack;
           auto-route = true;
           auto-detect-interface = true;
         };
       });
     in
     recursiveUpdate baseConfig cfg.extraConfig;
+
+  # Produces the yq pipe expression that overlays all Nix-controlled settings
+  # onto an existing config.yaml.  Used by both mkUpdateScript (subscription
+  # merge) and the nixos/home-manager preStart/activation hooks (generation
+  # tracking).  Keeping this in one place means a port change in shared.nix
+  # automatically propagates everywhere.
+  mkOverlayExpr =
+    cfg:
+    lib.concatStringsSep " | " (
+      [
+        ".port = ${toString cfg.port}"
+        ''.["socks-port"] = ${toString cfg.socksPort}''
+        ''.["mixed-port"] = ${toString cfg.mixedPort}''
+        ''.["allow-lan"] = ${if cfg.allowLan then "true" else "false"}''
+        ".mode = \"${cfg.mode}\""
+        ''.["log-level"] = "${cfg.logLevel}"''
+        ''.["external-controller"] = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}"''
+        ''.["external-controller-cors"].["allow-origins"] = ${corsOriginsYq}''
+        ''.["external-controller-cors"].["allow-private-network"] = true''
+      ]
+      # Only overlay secret when one is actually configured; when it is empty
+      # the secret is either absent (no auth) or will be injected at runtime
+      # by the shell script with a freshly-generated value.
+      ++ optional (cfg.secret != "") ".secret = \"${cfg.secret}\""
+    );
 
   # A script to apply subscriptions onto the config.
   #
@@ -97,18 +134,7 @@ let
     cfg:
     let
       urls = lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls);
-      # Our essential settings that must always win, as a yq expression
-      overlayExpr = lib.concatStringsSep " | " [
-        ".port = ${toString cfg.port}"
-        ''.["socks-port"] = ${toString cfg.socksPort}''
-        ''.["mixed-port"] = ${toString cfg.mixedPort}''
-        ''.["allow-lan"] = ${if cfg.allowLan then "true" else "false"}''
-        ".mode = \"${cfg.mode}\""
-        ''.["log-level"] = "${cfg.logLevel}"''
-        ''.["external-controller"] = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}"''
-        ''.["external-controller-cors"].["allow-origins"] = ["https://yacd.metacubex.one","https://metacubex.github.io","https://board.zash.run.place"]''
-        ''.["external-controller-cors"].["allow-private-network"] = true''
-      ];
+      overlayExpr = mkOverlayExpr cfg;
     in
     pkgs.writeShellScriptBin "clashix-update" ''
       set -e
@@ -122,13 +148,15 @@ let
         echo "Fetching $url..."
         temp_sub=$(mktemp)
         if env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-          ${pkgs.xh}/bin/xh "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
+          ${pkgs.xh}/bin/xh GET "$url" User-Agent:"clash-verge/v2.4.3" -o "$temp_sub"; then
 
           # Base64 decode if not valid YAML
           if ! ${pkgs.yq-go}/bin/yq e '.' "$temp_sub" >/dev/null 2>&1; then
             ${pkgs.toybox}/bin/base64 -d "$temp_sub" > "$temp_sub.decoded" 2>/dev/null || true
             if ${pkgs.yq-go}/bin/yq e '.' "$temp_sub.decoded" >/dev/null 2>&1; then
               mv "$temp_sub.decoded" "$temp_sub"
+            else
+              rm -f "$temp_sub.decoded"
             fi
           fi
 
@@ -136,7 +164,8 @@ let
             if [ "$FIRST_URL" = "true" ]; then
               # First subscription: use it as the base, overlay our settings on top
               ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' "$temp_sub"
-              # Apply secret if provided
+              # Apply runtime-generated secret if one was passed (shell mode).
+              # When cfg.secret is non-empty it is already embedded in overlayExpr.
               if [ -n "$SECRET" ]; then
                 ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$temp_sub"
               fi
@@ -151,7 +180,7 @@ let
             fi
           fi
         fi
-        rm -f "$temp_sub"
+        rm -f "$temp_sub" "$temp_sub.decoded"
       done
     '';
 
@@ -167,7 +196,6 @@ let
       shared = import ./shared.nix {
         inherit lib pkgs;
         config = { };
-        isHomeManager = false;
       };
 
       # Simple way to get defaults for options
@@ -187,7 +215,7 @@ let
       cfg = recursiveUpdate (getDefaults shared.options.programs.clashix) clashixConfig;
 
       finalClashConfig = mkClashConfig cfg;
-      clashConfigFile = pkgs.writeText "clashix-shell-config.yaml" (builtins.toJSON finalClashConfig);
+      clashConfigFile = (pkgs.formats.yaml { }).generate "clashix-shell-config.yaml" finalClashConfig;
       dashboardPath = getDashboardPath cfg;
       updateScript = mkUpdateScript cfg;
 
@@ -201,10 +229,10 @@ let
         cp ${clashConfigFile} "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
 
-        # Secret generation
+        # Secret generation — use /dev/urandom for adequate entropy
         SECRET="${cfg.secret}"
         if [ -z "$SECRET" ]; then
-          SECRET=$(printf "%06d" $((RANDOM % 1000000)))
+          SECRET=$(head -c 16 /dev/urandom | base64 | tr -d '=+/')
           ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$CONFIG_FILE"
         fi
 
@@ -337,7 +365,10 @@ in
     getDashboardPkg
     getDashboardPath
     mkClashConfig
+    mkOverlayExpr
     mkShell
     mkUpdateScript
+    corsOrigins
+    geodataFiles
     ;
 }
