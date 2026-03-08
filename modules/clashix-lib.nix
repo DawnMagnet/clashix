@@ -136,6 +136,19 @@ let
       # the secret is either absent (no auth) or will be injected at runtime
       # by the shell script with a freshly-generated value.
       ++ optional (cfg.secret != "") ".secret = \"${cfg.secret}\""
+      # Overlay tun settings when enabled; remove the key entirely when disabled
+      # so a subscription's own tun block is not left behind unexpectedly.
+      ++ (
+        if cfg.tun.enable then
+          [
+            ".tun.enable = true"
+            ".tun.stack = \"${cfg.tun.stack}\""
+            ''.tun["auto-route"] = true''
+            ''.tun["auto-detect-interface"] = true''
+          ]
+        else
+          [ "del(.tun)" ]
+      )
     );
 
   # A script to apply subscriptions onto the config.
