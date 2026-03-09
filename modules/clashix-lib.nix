@@ -48,20 +48,36 @@ let
     asn = "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb";
   };
 
-  # Canonical CORS allow-origins list.
-  # Single source of truth — used in both mkClashConfig (no-subscription path)
-  # and mkOverlayExpr (subscription path), keeping them in sync.
-  corsOrigins = [
+  # Remote-only CORS origins (public dashboard CDNs).
+  remoteOrigins = [
     "https://yacd.metacubex.one"
     "https://metacubex.github.io"
     "https://board.zash.run.place"
   ];
 
+  # Canonical CORS allow-origins list — includes local dashboard origins when enabled.
+  # Single source of truth — used in both mkClashConfig (no-subscription path)
+  # and mkOverlayExpr (subscription path), keeping them in sync.
+  mkCorsOrigins =
+    cfg:
+    remoteOrigins
+    ++ (
+      if cfg.dashboard.enable && cfg.dashboard.type != "none" then
+        [
+          "http://localhost:${toString cfg.dashboard.port}"
+          "http://127.0.0.1:${toString cfg.dashboard.port}"
+        ]
+      else
+        [ ]
+    );
+
   # Inline CORS list as a yq-compatible JSON array literal
-  corsOriginsYq =
-    "["
-    + lib.concatStringsSep "," (map (o: "\"${o}\"") corsOrigins)
-    + "]";
+  mkCorsOriginsYq =
+    cfg:
+    let
+      origins = mkCorsOrigins cfg;
+    in
+    "[" + lib.concatStringsSep "," (map (o: "\"${o}\"") origins) + "]";
 
   # Select the correct dashboard package based on config
   getDashboardPkg =
@@ -95,7 +111,7 @@ let
         log-level = cfg.logLevel;
         external-controller = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}";
         external-controller-cors = {
-          allow-origins = corsOrigins;
+          allow-origins = mkCorsOrigins cfg;
           allow-private-network = true;
         };
         secret = cfg.secret;
@@ -129,7 +145,7 @@ let
         ".mode = \"${cfg.mode}\""
         ''.["log-level"] = "${cfg.logLevel}"''
         ''.["external-controller"] = "${cfg.dashboard.bindAddress}:${toString cfg.controllerPort}"''
-        ''.["external-controller-cors"].["allow-origins"] = ${corsOriginsYq}''
+        ''.["external-controller-cors"].["allow-origins"] = ${mkCorsOriginsYq cfg}''
         ''.["external-controller-cors"].["allow-private-network"] = true''
       ]
       # Only overlay secret when one is actually configured; when it is empty
@@ -396,7 +412,7 @@ in
     mkOverlayExpr
     mkShell
     mkUpdateScript
-    corsOrigins
+    remoteOrigins
     geodataFiles
     ;
 }
