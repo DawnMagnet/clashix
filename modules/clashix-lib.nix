@@ -129,16 +129,33 @@ let
             "+.lan"
             "+.local"
             "+.localhost"
-            "+.internal" 
+            "+.internal"
+          ];
+          # default-nameserver 用于解析 DoH 服务器本身的域名，必须是普通 UDP DNS
+          default-nameserver = [
+            "223.5.5.5"
+            "223.6.6.6"
+            "119.29.29.29"
           ];
           nameserver = [
+            # 国内公共 DNS
+            "223.5.5.5"
+            "223.6.6.6"
+            "119.29.29.29"
+            "180.76.76.76"
+            # 国内 DoH
             "https://doh.pub/dns-query"
             "https://dns.alidns.com/dns-query"
           ];
           fallback = [
-            "https://1.1.1.1/dns-query"
-            "https://8.8.8.8/dns-query"
+            # 国际 DNS（用于解析被污染的域名）
+            "tls://1.1.1.1:853"
+            "tls://8.8.8.8:853"
           ];
+          fallback-filter = {
+            geoip = true;
+            geoip-code = "CN";
+          };
         };
         tun = {
           enable = true;
@@ -184,8 +201,11 @@ let
             ''.dns["enhanced-mode"] = "fake-ip"''
             ''.dns["fake-ip-range"] = "198.18.0.1/16"''
             ''.dns["fake-ip-filter"] = ["*", "+.lan", "+.local", "+.localhost", "+.internal"]''
-            ''.dns.nameserver = ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"]''
-            ''.dns.fallback = ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]''
+            ''.dns["default-nameserver"] = ["223.5.5.5", "223.6.6.6", "119.29.29.29"]''
+            ''.dns.nameserver = ["223.5.5.5", "223.6.6.6", "119.29.29.29", "180.76.76.76", "https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"]''
+            ''.dns.fallback = ["tls://1.1.1.1:853", "tls://8.8.8.8:853"]''
+            ''.dns["fallback-filter"].geoip = true''
+            ''.dns["fallback-filter"]["geoip-code"] = "CN"''
             ".tun.enable = true"
             ".tun.stack = \"${cfg.tun.stack}\""
             ''.tun["auto-route"] = true''
@@ -435,6 +455,9 @@ let
 
 in
 {
+  # Clashix version
+  version = "1.1.0";
+
   inherit
     getDashboardPkg
     getDashboardPath
