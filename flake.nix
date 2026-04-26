@@ -1,9 +1,6 @@
 {
   description = "A declarative Nix module for Mihomo (Clash Meta) with integrated web dashboards";
 
-  # Version tag for documentation and reference
-  version = "1.1.0";
-
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
