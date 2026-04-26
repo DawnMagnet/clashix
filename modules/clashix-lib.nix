@@ -119,11 +119,33 @@ let
         geox-url = geoxUrls;
       }
       // (optionalAttrs cfg.tun.enable {
+        dns = {
+          enable = true;
+          listen = "0.0.0.0:53";
+          enhanced-mode = "fake-ip";
+          fake-ip-range = "198.18.0.1/16";
+          fake-ip-filter = [
+            "*"
+            "+.lan"
+            "+.local"
+            "+.localhost"
+            "+.internal"
+          ];
+          nameserver = [
+            "https://doh.pub/dns-query"
+            "https://dns.alidns.com/dns-query"
+          ];
+          fallback = [
+            "https://1.1.1.1/dns-query"
+            "https://8.8.8.8/dns-query"
+          ];
+        };
         tun = {
           enable = true;
           stack = cfg.tun.stack;
           auto-route = true;
           auto-detect-interface = true;
+          strict-route = true;
         };
       });
     in
@@ -157,13 +179,21 @@ let
       ++ (
         if cfg.tun.enable then
           [
+            ".dns.enable = true"
+            ''.dns.listen = "0.0.0.0:53"''
+            ''.dns["enhanced-mode"] = "fake-ip"''
+            ''.dns["fake-ip-range"] = "198.18.0.1/16"''
+            ''.dns["fake-ip-filter"] = ["*", "+.lan", "+.local", "+.localhost", "+.internal"]''
+            ''.dns.nameserver = ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"]''
+            ''.dns.fallback = ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]''
             ".tun.enable = true"
             ".tun.stack = \"${cfg.tun.stack}\""
             ''.tun["auto-route"] = true''
             ''.tun["auto-detect-interface"] = true''
+            ''.tun["strict-route"] = true''
           ]
         else
-          [ "del(.tun)" ]
+          [ "del(.tun)" "del(.dns)" ]
       )
     );
 

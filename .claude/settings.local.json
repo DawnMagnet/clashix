@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nix build *)",
+      "Read(//nix/store/**)",
+      "Bash(xargs ls *)",
+      "Bash(nix path-info *)"
+    ]
+  }
+}
