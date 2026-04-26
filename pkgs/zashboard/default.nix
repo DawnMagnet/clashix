@@ -2,11 +2,11 @@
 
 stdenvNoCC.mkDerivation rec {
   pname = "zashboard";
-  version = "v2.7.0";
+  version = "v3.5.1";
 
   src = fetchzip {
     url = "https://github.com/Zephyruso/zashboard/releases/download/${version}/dist.zip";
-    sha256 = "sha256-V3luGGR8xb88oLDMHQGQc0IhTZjRJ6RLe6fIBQ5W9Og=";
+    sha256 = "sha256-QE0LZlptAA6e1wAE+1NMC+HIoTGAmbQM4Ps1FM03a1k=";
     stripRoot = false;
   };
 

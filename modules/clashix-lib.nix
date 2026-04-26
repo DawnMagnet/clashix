@@ -129,7 +129,7 @@ let
             "+.lan"
             "+.local"
             "+.localhost"
-            "+.internal"
+            "+.internal" 
           ];
           nameserver = [
             "https://doh.pub/dns-query"
