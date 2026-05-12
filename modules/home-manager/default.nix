@@ -22,6 +22,7 @@ let
 
   # yq overlay expression shared with activation script
   overlayExpr = clashixLib.mkOverlayExpr cfg;
+  checkScript = clashixLib.mkConfigCheckScript cfg;
 
   # stateDir for Home Manager: follows XDG state convention
   stateDir = "${config.xdg.stateHome}/clashix";
@@ -57,15 +58,26 @@ in
           if cfg.bootstrapConfig != null then
             ''
               cp ${cfg.bootstrapConfig} ${stateDir}/config.yaml
+              ${pkgs.coreutils}/bin/date +%s > ${stateDir}/.config-source-updated-at
+            ''
+          else if cfg.tun.enable && cfg.tun.safety.enable then
+            ''
+              echo "clashix: TUN safety refused first start without bootstrapConfig or existing ${stateDir}/config.yaml" >&2
+              exit 1
             ''
           else
             ''
               cp ${configFile} ${stateDir}/config.yaml
+              ${pkgs.coreutils}/bin/date +%s > ${stateDir}/.config-source-updated-at
             ''
         }
         chmod 600 ${stateDir}/config.yaml
         ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
         printf '%s' '${configFile}' > ${stateDir}/.nix-gen
+      fi
+
+      if [ ! -f ${stateDir}/.config-source-updated-at ]; then
+        ${pkgs.coreutils}/bin/stat -c %Y ${stateDir}/config.yaml > ${stateDir}/.config-source-updated-at
       fi
 
       # --- 2. Re-apply overlay on generation change -----------------------------
@@ -74,6 +86,12 @@ in
         ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
         printf '%s' "$NIX_GEN_MARKER" > ${stateDir}/.nix-gen
       fi
+
+      ${
+        optionalString (cfg.tun.enable && cfg.tun.safety.enable) ''
+          ${pkgs.yq-go}/bin/yq -i '${overlayExpr}' ${stateDir}/config.yaml
+        ''
+      }
 
       # --- 3. Seed geodata from the Nix store -----------------------------------
       if [ ! -f ${stateDir}/country.mmdb ]; then
@@ -92,6 +110,33 @@ in
         cp ${clashixLib.geodataFiles.geosite} ${stateDir}/geosite.dat
         chmod 644 ${stateDir}/geosite.dat
       fi
+
+      ${
+        optionalString (cfg.tun.enable && cfg.tun.safety.enable) ''
+          if ${checkScript}/bin/clashix-check-config ${stateDir} ${stateDir}/config.yaml; then
+            rm -f ${stateDir}/.tun-safety-mode
+          else
+            ${
+              if cfg.tun.safety.fallback == "disable-tun" then
+                ''
+                  echo "clashix: TUN safety failed; starting Mihomo without TUN/DNS route takeover" >&2
+                  safe_config=$(${pkgs.coreutils}/bin/mktemp)
+                  cp ${stateDir}/config.yaml "$safe_config"
+                  ${pkgs.yq-go}/bin/yq -i 'del(.tun) | del(.dns)' "$safe_config"
+                  ${cfg.package}/bin/mihomo -t -d ${stateDir} -f "$safe_config" >/dev/null
+                  cp "$safe_config" ${stateDir}/config.yaml
+                  echo disabled > ${stateDir}/.tun-safety-mode
+                  rm -f "$safe_config"
+                ''
+              else
+                ''
+                  echo "clashix: TUN safety failed; refusing to start" >&2
+                  exit 1
+                ''
+            }
+          fi
+        ''
+      }
     '';
 
     # 1. Main Mihomo user service
@@ -100,6 +145,8 @@ in
         Description = "Mihomo daemon (programs.clashix via Home Manager)";
         After = [ "network-online.target" ];
         Wants = [ "network-online.target" ];
+        StartLimitIntervalSec = "30s";
+        StartLimitBurst = 5;
       };
 
       Install.WantedBy = [ "default.target" ];
@@ -109,13 +156,16 @@ in
         ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
         RestartSec = "2s";
-        StartLimitIntervalSec = "30s";
-        StartLimitBurst = 5;
         # Note: TUN mode under user services is problematic — see warnings above.
         # TUN health check only works if user has sufficient privileges (setcap)
         ExecStartPost = mkIf cfg.tun.enable (pkgs.writeShellScript "clashix-tun-check-hm" ''
+          if [ "$(cat ${stateDir}/.tun-safety-mode 2>/dev/null || true)" = "disabled" ]; then
+            echo "TUN safety fallback is active; skipping TUN interface check"
+            exit 0
+          fi
+
           sleep 3
-          if ! ip link show utun >/dev/null 2>&1 && ! ip link show tun0 >/dev/null 2>&1; then
+          if ! ${pkgs.iproute2}/bin/ip link show Meta >/dev/null 2>&1 && ! ${pkgs.iproute2}/bin/ip link show utun >/dev/null 2>&1 && ! ${pkgs.iproute2}/bin/ip link show tun0 >/dev/null 2>&1; then
             echo "TUN interface not found after startup - will restart" >&2
             exit 1
           fi

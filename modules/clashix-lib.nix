@@ -217,6 +217,56 @@ let
       )
     );
 
+  mkConfigCheckScript =
+    cfg:
+    let
+      enforceTunSafety = cfg.tun.enable && cfg.tun.safety.enable;
+      maxConfigAgeSeconds = toString (cfg.tun.safety.maxConfigAgeDays * 24 * 60 * 60);
+    in
+    pkgs.writeShellScriptBin "clashix-check-config" ''
+      set -eu
+
+      STATE_DIR="''${1:?state directory is required}"
+      CONFIG_FILE="''${2:?config file is required}"
+
+      fail() {
+        echo "clashix: $1" >&2
+        exit 1
+      }
+
+      [ -s "$CONFIG_FILE" ] || fail "config file is missing or empty: $CONFIG_FILE"
+
+      ${pkgs.yq-go}/bin/yq e '.' "$CONFIG_FILE" >/dev/null 2>&1 \
+        || fail "config file is not valid YAML: $CONFIG_FILE"
+
+      ${optionalString enforceTunSafety ''
+        has_proxy_inventory=$(${pkgs.yq-go}/bin/yq e '(((.proxies // []) | length) > 0) or (((.["proxy-providers"] // {}) | length) > 0)' "$CONFIG_FILE" 2>/dev/null || echo false)
+        if [ "$has_proxy_inventory" != "true" ]; then
+          fail "TUN safety rejected config without proxies or proxy-providers"
+        fi
+
+        if [ "${maxConfigAgeSeconds}" != "0" ] && [ "''${CLASHIX_SKIP_AGE_CHECK:-0}" != "1" ]; then
+          source_marker="$STATE_DIR/.config-source-updated-at"
+          if [ -f "$source_marker" ]; then
+            source_time=$(cat "$source_marker" 2>/dev/null || echo 0)
+          else
+            source_time=$(${pkgs.coreutils}/bin/stat -c %Y "$CONFIG_FILE" 2>/dev/null || echo 0)
+          fi
+          case "$source_time" in
+            ""|*[!0-9]*) source_time=0 ;;
+          esac
+          now=$(${pkgs.coreutils}/bin/date +%s)
+          age=$((now - source_time))
+          if [ "$age" -gt "${maxConfigAgeSeconds}" ]; then
+            fail "TUN safety rejected stale config: age ''${age}s exceeds ${maxConfigAgeSeconds}s"
+          fi
+        fi
+      ''}
+
+      ${cfg.package}/bin/mihomo -t -d "$STATE_DIR" -f "$CONFIG_FILE" >/dev/null 2>&1 \
+        || fail "mihomo rejected config: $CONFIG_FILE"
+    '';
+
   # A script to apply subscriptions onto the config.
   #
   # Strategy: treat the subscription as the PRIMARY config, then overlay our
@@ -229,11 +279,16 @@ let
     let
       urls = lib.concatStringsSep " " (lib.map (u: "\"${u}\"") cfg.subscriptionUrls);
       overlayExpr = mkOverlayExpr cfg;
+      checkScript = mkConfigCheckScript cfg;
     in
     pkgs.writeShellScriptBin "clashix-update" ''
       set -e
       CONFIG_FILE="''${1:-config.yaml}"
       SECRET="''${2:-}"
+      STATE_DIR=$(${pkgs.coreutils}/bin/dirname "$CONFIG_FILE")
+      MERGED_CONFIG=$(mktemp)
+      trap 'rm -f "$MERGED_CONFIG" "$MERGED_CONFIG.tmp"' EXIT
+
       echo "--- Updating subscriptions ---"
 
       FIRST_URL=true
@@ -263,19 +318,30 @@ let
               if [ -n "$SECRET" ]; then
                 ${pkgs.yq-go}/bin/yq -i ".secret = \"$SECRET\"" "$temp_sub"
               fi
-              cp "$temp_sub" "$CONFIG_FILE"
+              cp "$temp_sub" "$MERGED_CONFIG"
               FIRST_URL=false
             else
               # Additional subscriptions: only merge proxies (not proxy-groups, to avoid naming conflicts)
               ${pkgs.yq-go}/bin/yq eval-all -i '
                 select(fileIndex == 0).proxies += (select(fileIndex == 1).proxies // []) |
                 select(fileIndex == 0)
-              ' "$CONFIG_FILE" "$temp_sub"
+              ' "$MERGED_CONFIG" "$temp_sub"
             fi
           fi
         fi
         rm -f "$temp_sub" "$temp_sub.decoded"
       done
+
+      if [ "$FIRST_URL" = "true" ]; then
+        echo "clashix: no valid subscription config was fetched; keeping existing config" >&2
+        exit 1
+      fi
+
+      CLASHIX_SKIP_AGE_CHECK=1 ${checkScript}/bin/clashix-check-config "$STATE_DIR" "$MERGED_CONFIG"
+
+      ${pkgs.coreutils}/bin/install -m 600 "$MERGED_CONFIG" "$CONFIG_FILE"
+      cp "$CONFIG_FILE" "$STATE_DIR/config.yaml.last-good"
+      ${pkgs.coreutils}/bin/date +%s > "$STATE_DIR/.config-source-updated-at"
     '';
 
   # Create a shell environment
@@ -456,12 +522,13 @@ let
 in
 {
   # Clashix version
-  version = "1.1.0";
+  version = "1.1.1";
 
   inherit
     getDashboardPkg
     getDashboardPath
     mkClashConfig
+    mkConfigCheckScript
     mkOverlayExpr
     mkShell
     mkUpdateScript

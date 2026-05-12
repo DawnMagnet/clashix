@@ -30,6 +30,7 @@ let
     rules:
       - MATCH,DIRECT
   '';
+  mockSubscriptionFile = "${mockSubscriptionDir}/sub.yaml";
 
   # Base module import helper — keeps node definitions terse
   withClashix = extraCfg: { ... }: {
@@ -350,6 +351,7 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       programs.clashix = {
         enable         = true;
         tun.enable     = true;
+        bootstrapConfig = mockSubscriptionFile;
         dashboard.type = "none";
       };
     };
@@ -389,6 +391,31 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
           cap_hex = cap_amb.split()[-1]
           assert cap_hex != "0000000000000000", \
               f"Expected non-zero ambient capabilities (CAP_NET_ADMIN), got: {cap_amb}"
+    '';
+  };
+
+  # TUN must not start from the generated empty skeleton on first deployment.
+  # Users need either an existing state config or an explicit bootstrapConfig.
+  tunFirstStartRequiresConfigTest = pkgs.testers.nixosTest {
+    name = "clashix-tun-first-start-requires-config";
+
+    nodes.machine = { ... }: {
+      imports = [ self.nixosModules.default ];
+      boot.kernelModules = [ "tun" ];
+
+      programs.clashix = {
+        enable         = true;
+        tun.enable     = true;
+        dashboard.type = "none";
+      };
+    };
+
+    testScript = ''
+      machine.wait_until_succeeds("systemctl is-failed --quiet clashix.service")
+      journal = machine.succeed("journalctl -u clashix.service --no-pager")
+      assert "refused first start without bootstrapConfig" in journal, \
+          f"Expected first-start safety refusal in journal:\n{journal[-2000:]}"
+      machine.succeed("test ! -f /var/lib/clashix/config.yaml")
     '';
   };
 
@@ -464,6 +491,7 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
         enable         = true;
         tun.enable     = true;
         tun.stack      = "gvisor";
+        bootstrapConfig = mockSubscriptionFile;
         dashboard.type = "none";
       };
     };

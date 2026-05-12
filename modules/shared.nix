@@ -55,6 +55,43 @@ with lib;
           - "mixed": system stack for TCP, gVisor for UDP
         '';
       };
+
+      safety = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Enable a startup safety gate for TUN mode.  When enabled, Clashix
+            refuses to start TUN from an empty first-boot skeleton, validates
+            the active Mihomo configuration before route takeover, and can
+            fall back to non-TUN mode when the configuration is invalid or too
+            old.
+          '';
+        };
+
+        maxConfigAgeDays = mkOption {
+          type = types.ints.unsigned;
+          default = 7;
+          description = ''
+            Maximum accepted age, in days, of the last successful bootstrap or
+            subscription update before TUN is considered unsafe.  Set to 0 to
+            disable the age check.
+          '';
+        };
+
+        fallback = mkOption {
+          type = types.enum [
+            "disable-tun"
+            "stop"
+          ];
+          default = "disable-tun";
+          description = ''
+            What to do when the TUN safety gate fails.  "disable-tun" starts
+            Mihomo with TUN/DNS removed from the runtime config; "stop" refuses
+            to start the service.
+          '';
+        };
+      };
     };
 
     dashboard = {
