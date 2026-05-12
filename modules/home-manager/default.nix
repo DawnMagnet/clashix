@@ -108,7 +108,19 @@ in
         ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
         ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
+        RestartSec = "2s";
+        StartLimitIntervalSec = "30s";
+        StartLimitBurst = 5;
         # Note: TUN mode under user services is problematic — see warnings above.
+        # TUN health check only works if user has sufficient privileges (setcap)
+        ExecStartPost = mkIf cfg.tun.enable (pkgs.writeShellScript "clashix-tun-check-hm" ''
+          sleep 3
+          if ! ip link show utun >/dev/null 2>&1 && ! ip link show tun0 >/dev/null 2>&1; then
+            echo "TUN interface not found after startup - will restart" >&2
+            exit 1
+          fi
+          echo "TUN interface detected successfully"
+        '');
       };
     };
 

@@ -54,6 +54,9 @@ in
         ExecStart = "${cfg.package}/bin/mihomo -d ${stateDir} -f ${stateDir}/config.yaml";
         ExecReload = "${pkgs.toybox}/bin/kill -HUP $MAINPID";
         Restart = "on-failure";
+        RestartSec = "2s";
+        StartLimitIntervalSec = "30s";
+        StartLimitBurst = 5;
         StateDirectory = "clashix";
       }
       // (
@@ -78,6 +81,28 @@ in
             DynamicUser = true;
           }
       );
+
+      # TUN mode health check and recovery mechanism.
+      # Problem: On early boot, the main network interface may not be fully ready
+      # when mihomo starts, causing TUN to fail with "no route to host" but the
+      # process keeps running without TUN. Since the process itself doesn't crash,
+      # systemd's Restart=on-failure won't trigger.
+      #
+      # Solution: After mihomo starts, we wait a few seconds then check if the
+      # TUN interface exists (utun or tun0). If TUN is enabled but the interface
+      # is missing, exit with failure to trigger systemd restart with backoff.
+      ExecStartPost = mkIf cfg.tun.enable (pkgs.writeShellScript "clashix-tun-check" ''
+        # Give mihomo time to initialize and attempt TUN setup
+        sleep 3
+
+        # Check if TUN interface exists (utun for mihomo default, tun0 otherwise)
+        if ! ip link show utun >/dev/null 2>&1 && ! ip link show tun0 >/dev/null 2>&1; then
+          echo "TUN interface not found after startup - will restart" >&2
+          # Exit non-zero to mark service as failed, triggering Restart=on-failure
+          exit 1
+        fi
+        echo "TUN interface detected successfully"
+      '');
 
       # Generation-aware initialisation:
       #  1. On first boot: seed config.yaml from bootstrapConfig (if provided)
