@@ -3,12 +3,11 @@
 # metacubexd: Official dashboard from MetaCubeX
 stdenvNoCC.mkDerivation rec {
   pname = "metacubexd";
-  version = "v1.241.3"; # Latest version as of writing
+  version = "v1.247.0";
 
   src = fetchzip {
-    # REAL
     url = "https://github.com/MetaCubeX/metacubexd/releases/download/${version}/compressed-dist.tgz";
-    sha256 = "1bmpzyy7m1736inckz3v7lhx4nac4pa9p113j1jvs9aspwpw8q6i";
+    sha256 = "sha256-VinNCJkO1mpkuQFk5/5oLJKRXGBeWozIf+MQYhQxuOM=";
     stripRoot = false;
   };
 

@@ -3,12 +3,12 @@
 # yacd-meta: MetaCubeX fork of Yacd
 stdenvNoCC.mkDerivation {
   pname = "yacd-meta";
-  version = "v0.3.8"; # Or whatever the latest stable is
+  version = "v0.3.8";
 
   # The latest yacd-meta release provides a tarball containing the static files
   src = fetchzip {
     url = "https://codeload.github.com/MetaCubeX/Yacd-meta/zip/refs/heads/gh-pages";
-    sha256 = "sha256-6nsAGdD343d/zTTzjccKeAR+6NdJMgaNkfW+QcFJ+s4=";
+    sha256 = "sha256-v8ftk6heSHwkZSpdImFctU3GEK70i23ns21MSrYPDs8=";
     extension = "zip";
     stripRoot = false;
   };
