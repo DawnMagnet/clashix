@@ -233,6 +233,7 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       # Trigger the subscription update
       machine.succeed("systemctl start clashix-update.service")
       machine.wait_for_unit("clashix.service")
+      machine.succeed("test \"$(stat -c '%U:%G %a' /var/lib/clashix/config.yaml)\" = 'clashix:clashix 600'")
 
       config = machine.succeed("cat /var/lib/clashix/config.yaml")
 
@@ -248,6 +249,12 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       machine.succeed(
           "${pkgs.yq-go}/bin/yq e '.' /var/lib/clashix/config.yaml > /dev/null"
       )
+
+      # A config rewritten by the update service must remain readable after a
+      # full daemon restart, not only during the already-running process.
+      machine.succeed("systemctl restart clashix.service")
+      machine.wait_for_unit("clashix.service")
+      machine.wait_for_open_port(7890)
     '';
   };
 
@@ -373,6 +380,7 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       # Try to start the service; if mihomo manages to bring up the TUN
       # interface even briefly, verify it is not running as root.
       machine.wait_for_unit("clashix.service")
+      machine.succeed("test \"$(stat -c '%U:%G %a' /var/lib/clashix/config.yaml)\" = 'clashix:clashix 600'")
 
       pid = machine.succeed(
           "systemctl show -p MainPID --value clashix.service"

@@ -340,8 +340,15 @@ let
       CLASHIX_SKIP_AGE_CHECK=1 ${checkScript}/bin/clashix-check-config "$STATE_DIR" "$MERGED_CONFIG"
 
       ${pkgs.coreutils}/bin/install -m 600 "$MERGED_CONFIG" "$CONFIG_FILE"
-      cp "$CONFIG_FILE" "$STATE_DIR/config.yaml.last-good"
+      ${pkgs.coreutils}/bin/install -m 600 "$CONFIG_FILE" "$STATE_DIR/config.yaml.last-good"
       ${pkgs.coreutils}/bin/date +%s > "$STATE_DIR/.config-source-updated-at"
+
+      if [ -n "''${CLASHIX_CONFIG_OWNER:-}" ]; then
+        ${pkgs.coreutils}/bin/chown "$CLASHIX_CONFIG_OWNER" \
+          "$CONFIG_FILE" \
+          "$STATE_DIR/config.yaml.last-good" \
+          "$STATE_DIR/.config-source-updated-at"
+      fi
     '';
 
   # Create a shell environment
@@ -522,7 +529,7 @@ let
 in
 {
   # Clashix version
-  version = "1.1.1";
+  version = "1.1.2";
 
   inherit
     getDashboardPkg

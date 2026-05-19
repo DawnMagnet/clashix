@@ -9,7 +9,7 @@
 - **完全声明式**：通过原生 Nix 选项管理代理端口、模式、局域网访问等核心配置。每次服务重启时，模块都会通过「Generation 追踪」机制自动重新应用 Nix 声明的配置，`nixos-rebuild` 后无需手动修改任何文件。
 - **多订阅智能合并**：支持配置多个订阅 URL。第一个 URL 的配置作为主配置（包含 proxy-groups、rules 等完整结构）；后续 URL 仅合并其 `proxies` 列表，彻底避免 proxy-group 重名冲突。
 - **独立面板微服务**：面板资源（Yacd / Metacubexd / Zashboard）由专用的 `darkhttpd` systemd 服务托管，与 Mihomo 进程边界隔离。三种面板的域名均已预置于 `external-controller-cors` 白名单，鉴权链接开箱即用，无 CORS 报错。
-- **安全的 TUN 透明代理**（NixOS）：开启 `tun.enable = true` 时，NixOS 模块会自动创建专用系统用户 `clashix`，并通过 Ambient Capabilities 授予 `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE`。Mihomo 永不以 root 身份运行。
+- **专用运行用户**（NixOS）：NixOS 模块会以专用系统用户 `clashix` 运行 Mihomo。开启 `tun.enable = true` 时，仅通过 Ambient Capabilities 额外授予 `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE`。
 - **可配置 TUN 协议栈**：通过 `tun.stack` 选项在 `system`（默认）、`gvisor`、`mixed` 之间切换。
 
 ## 用法说明

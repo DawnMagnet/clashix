@@ -35,14 +35,14 @@ in
 
   config = mkIf cfg.enable {
 
-    # Dedicated system user for TUN mode — avoids running the process as root
-    # while still granting the required network capabilities.
-    users.users.clashix = mkIf cfg.tun.enable {
+    # Dedicated system user — keeps the persistent runtime config owned by the
+    # same account across preStart, subscription updates, and Mihomo itself.
+    users.users.clashix = {
       isSystemUser = true;
       group = "clashix";
       description = "Clashix/Mihomo proxy daemon";
     };
-    users.groups.clashix = mkIf cfg.tun.enable { };
+    users.groups.clashix = { };
 
     # 1. Main Mihomo daemon
     systemd.services.clashix = {
@@ -79,29 +79,22 @@ in
         Restart = "on-failure";
         RestartSec = "2s";
         StateDirectory = "clashix";
+        StateDirectoryMode = "0700";
+        DynamicUser = false;
+        User = "clashix";
+        Group = "clashix";
+        PermissionsStartOnly = true;
       }
-      // (
-        if cfg.tun.enable then
-          {
-            # Dedicated user with only the required capabilities — not root
-            DynamicUser = false;
-            User = "clashix";
-            Group = "clashix";
-            AmbientCapabilities = [
-              "CAP_NET_ADMIN"
-              "CAP_NET_BIND_SERVICE"
-            ];
-            CapabilityBoundingSet = [
-              "CAP_NET_ADMIN"
-              "CAP_NET_BIND_SERVICE"
-            ];
-          }
-        else
-          {
-            # Ephemeral dynamic user for maximum isolation when TUN is off
-            DynamicUser = true;
-          }
-      );
+      // optionalAttrs cfg.tun.enable {
+        AmbientCapabilities = [
+          "CAP_NET_ADMIN"
+          "CAP_NET_BIND_SERVICE"
+        ];
+        CapabilityBoundingSet = [
+          "CAP_NET_ADMIN"
+          "CAP_NET_BIND_SERVICE"
+        ];
+      };
 
       # Generation-aware initialisation:
       #  1. On first boot: seed config.yaml from bootstrapConfig (if provided)
@@ -113,6 +106,21 @@ in
       #  3. Pre-populate geodata from the Nix store so mihomo never needs to
       #     download country.mmdb / geoip.dat / geosite.dat on first boot.
       preStart = ''
+        fix_runtime_permissions() {
+          chown -R clashix:clashix ${stateDir}
+          chmod 700 ${stateDir}
+          if [ -f ${stateDir}/config.yaml ]; then
+            chmod 600 ${stateDir}/config.yaml
+          fi
+          if [ -f ${stateDir}/config.yaml.last-good ]; then
+            chmod 600 ${stateDir}/config.yaml.last-good
+          fi
+        }
+
+        # Repair state left by older module versions or manual recovery.  This
+        # must happen before any yq overlay attempts to rewrite config.yaml.
+        fix_runtime_permissions
+
         # --- 1. Bootstrap config.yaml on first boot --------------------------------
         if [ ! -f ${stateDir}/config.yaml ]; then
           ${
@@ -206,6 +214,8 @@ in
             fi
           ''
         }
+
+        fix_runtime_permissions
       '';
     };
 
@@ -238,7 +248,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         # Secret is passed so the overlay includes it even for NixOS deployments
-        ExecStart = "${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml ${cfg.secret}";
+        ExecStart = "${pkgs.coreutils}/bin/env CLASHIX_CONFIG_OWNER=clashix:clashix ${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml ${cfg.secret}";
       };
 
       postStop = ''

@@ -9,7 +9,7 @@ A declarative, headless Mihomo (Clash Meta) client module for NixOS and Home Man
 - **Fully Declarative**: Manage core ports, modes, and network settings through Nix options. All Nix-controlled settings are automatically re-applied on every service restart via generation tracking — no manual config edits needed after a `nixos-rebuild`.
 - **Multiple Subscriptions with Smart Merging**: Feed in a list of URLs. The first URL's config is used as the primary (proxy-groups, rules, etc.); subsequent URLs contribute only their proxies, avoiding duplicate proxy-group errors.
 - **Micro Dashboard Server**: The chosen web UI (Yacd, Metacubexd, Zashboard) is served by an isolated `darkhttpd` systemd service. CORS headers are pre-configured for all three dashboard origins so the auth link flow works out of the box.
-- **Secure TUN Mode** (NixOS): When `tun.enable = true`, the NixOS module automatically creates a dedicated `clashix` system user and grants it `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE` as ambient capabilities. Mihomo never runs as root.
+- **Dedicated Runtime User** (NixOS): The NixOS module runs Mihomo as a dedicated `clashix` system user. When `tun.enable = true`, it grants only `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE` as ambient capabilities.
 - **Configurable TUN Stack**: Choose between `system` (default), `gvisor`, or `mixed` stack via `tun.stack`.
 
 ## Installation & Usage
