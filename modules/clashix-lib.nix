@@ -584,7 +584,7 @@ let
 in
 {
   # Clashix version
-  version = "1.1.3";
+  version = "1.1.4";
 
   inherit
     getDashboardPkg

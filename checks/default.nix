@@ -225,6 +225,14 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       machine.wait_for_open_port(9999)
       machine.wait_for_unit("clashix.service")
 
+      update_unit = machine.succeed("systemctl cat clashix-update.service")
+      assert "ExecStartPost" in update_unit, \
+          f"clashix-update.service must only reload after a successful update:\n{update_unit}"
+      assert "try-reload-or-restart clashix.service" in update_unit, \
+          f"Non-TUN updates should reload/restart clashix after success:\n{update_unit}"
+      assert "ExecStopPost" not in update_unit, \
+          f"clashix-update.service must not reload after failed updates:\n{update_unit}"
+
       # Sanity-check that the mock server actually serves the file
       sub_content = machine.succeed("curl -sf http://127.0.0.1:9999/sub.yaml")
       assert "mock-proxy" in sub_content, \
@@ -255,6 +263,19 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       machine.succeed("systemctl restart clashix.service")
       machine.wait_for_unit("clashix.service")
       machine.wait_for_open_port(7890)
+
+      # A failed subscription update must not reload/restart Mihomo.  This
+      # protects TUN mode from failed-update reloads that leave the old TUN
+      # device busy while Mihomo tries to rebuild it.
+      machine.succeed("systemctl stop mock-subscription-server.service")
+      machine.sleep(1)
+      before = machine.succeed("date +%s").strip()
+      machine.fail("systemctl start clashix-update.service")
+      journal = machine.succeed(f"journalctl -u clashix.service --since '@{before}' --no-pager")
+      assert "Reloading Mihomo daemon" not in journal, \
+          f"Failed update unexpectedly reloaded clashix.service:\n{journal}"
+      assert "Stopping Mihomo daemon" not in journal, \
+          f"Failed update unexpectedly restarted clashix.service:\n{journal}"
     '';
   };
 
@@ -358,6 +379,7 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       programs.clashix = {
         enable         = true;
         tun.enable     = true;
+        subscriptionUrls = [ "http://127.0.0.1:9999/sub.yaml" ];
         bootstrapConfig = mockSubscriptionFile;
         dashboard.type = "none";
       };
@@ -377,15 +399,23 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       assert "CAP_NET_ADMIN" in unit_conf, \
           f"clashix.service missing CAP_NET_ADMIN:\n{unit_conf}"
 
-      health_conf = machine.succeed("systemctl cat clashix-tun-health-check.service")
-      assert "ip route show table all" in health_conf, \
-          f"TUN health check does not inspect routing tables:\n{health_conf}"
-      assert "systemctl restart clashix.service" in health_conf, \
-          f"TUN health check does not restart clashix.service:\n{health_conf}"
+      health_script = machine.succeed(
+          "health_script=$(systemctl cat clashix-tun-health-check.service | sed -n 's/^ExecStart=//p'); cat \"$health_script\""
+      )
+      assert "ip route show table all" in health_script, \
+          f"TUN health check does not inspect routing tables:\n{health_script}"
+      assert "systemctl restart clashix.service" in health_script, \
+          f"TUN health check does not restart clashix.service:\n{health_script}"
 
       timer_conf = machine.succeed("systemctl cat clashix-tun-health-check.timer")
       assert "OnUnitActiveSec=30s" in timer_conf, \
           f"TUN health check timer missing default interval:\n{timer_conf}"
+
+      update_conf = machine.succeed("systemctl cat clashix-update.service")
+      assert "try-restart clashix.service" in update_conf, \
+          f"TUN subscription updates must restart instead of reload:\n{update_conf}"
+      assert "try-reload-or-restart clashix.service" not in update_conf, \
+          f"TUN subscription updates must not reload TUN in place:\n{update_conf}"
 
       # Try to start the service; if mihomo manages to bring up the TUN
       # interface even briefly, verify it is not running as root.

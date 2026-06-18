@@ -238,9 +238,11 @@ in
       Service = {
         Type = "oneshot";
         ExecStart = "${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml ${cfg.secret}";
-        ExecStopPost = pkgs.writeShellScript "clashix-post-update-hm" ''
-          ${pkgs.systemd}/bin/systemctl --user reload clashix.service || true
-        '';
+        ExecStartPost =
+          if cfg.tun.enable then
+            "${pkgs.systemd}/bin/systemctl --user try-restart clashix.service"
+          else
+            "${pkgs.systemd}/bin/systemctl --user try-reload-or-restart clashix.service";
       };
     };
 

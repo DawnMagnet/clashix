@@ -275,11 +275,12 @@ in
         Type = "oneshot";
         # Secret is passed so the overlay includes it even for NixOS deployments
         ExecStart = "${pkgs.coreutils}/bin/env CLASHIX_CONFIG_OWNER=clashix:clashix ${clashixLib.mkUpdateScript cfg}/bin/clashix-update ${stateDir}/config.yaml ${cfg.secret}";
+        ExecStartPost =
+          if cfg.tun.enable then
+            "${pkgs.systemd}/bin/systemctl try-restart clashix.service"
+          else
+            "${pkgs.systemd}/bin/systemctl try-reload-or-restart clashix.service";
       };
-
-      postStop = ''
-        systemctl reload clashix.service || true
-      '';
     };
 
     systemd.timers.clashix-update = mkIf (cfg.subscriptionUrls != [ ]) {

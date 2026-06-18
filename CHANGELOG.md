@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.4 - 2026-06-19
+
+### Fixed
+
+- Only reload or restart `clashix.service` after successful subscription updates; failed updates no longer trigger Mihomo reloads.
+- Restart Mihomo instead of reloading it after successful subscription updates when TUN mode is enabled.
+
 ## 1.1.3 - 2026-06-19
 
 ### Fixed
