@@ -377,6 +377,16 @@ lib.optionalAttrs pkgs.stdenv.isLinux {
       assert "CAP_NET_ADMIN" in unit_conf, \
           f"clashix.service missing CAP_NET_ADMIN:\n{unit_conf}"
 
+      health_conf = machine.succeed("systemctl cat clashix-tun-health-check.service")
+      assert "ip route show table all" in health_conf, \
+          f"TUN health check does not inspect routing tables:\n{health_conf}"
+      assert "systemctl restart clashix.service" in health_conf, \
+          f"TUN health check does not restart clashix.service:\n{health_conf}"
+
+      timer_conf = machine.succeed("systemctl cat clashix-tun-health-check.timer")
+      assert "OnUnitActiveSec=30s" in timer_conf, \
+          f"TUN health check timer missing default interval:\n{timer_conf}"
+
       # Try to start the service; if mihomo manages to bring up the TUN
       # interface even briefly, verify it is not running as root.
       machine.wait_for_unit("clashix.service")

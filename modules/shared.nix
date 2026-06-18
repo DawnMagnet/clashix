@@ -92,6 +92,36 @@ with lib;
           '';
         };
       };
+
+      healthCheck = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Enable a periodic runtime health check for TUN mode.  The check
+            restarts the Clashix service when the TUN interface or its default
+            route disappears while Mihomo is still running.
+          '';
+        };
+
+        interval = mkOption {
+          type = types.str;
+          default = "30s";
+          description = ''
+            systemd time span used between TUN health checks.
+          '';
+        };
+
+        requireDefaultRoute = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Require a default route through the detected TUN interface.  Disable
+            this only for unusual Mihomo routing setups that intentionally keep
+            TUN routes out of system routing tables.
+          '';
+        };
+      };
     };
 
     dashboard = {

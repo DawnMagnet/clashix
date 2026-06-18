@@ -267,6 +267,61 @@ let
         || fail "mihomo rejected config: $CONFIG_FILE"
     '';
 
+  mkTunHealthCheckScript =
+    cfg:
+    {
+      stateDir,
+      isActiveCommand,
+      restartCommand,
+    }:
+    pkgs.writeShellScript "clashix-tun-health-check" ''
+      set -eu
+
+      if [ "$(cat ${stateDir}/.tun-safety-mode 2>/dev/null || true)" = "disabled" ]; then
+        echo "clashix: TUN safety fallback is active; skipping health check"
+        exit 0
+      fi
+
+      if ! ${isActiveCommand}; then
+        exit 0
+      fi
+
+      restart_clashix() {
+        echo "clashix: TUN health check failed: $1" >&2
+        ${restartCommand}
+      }
+
+      tun_ifaces=""
+      for iface in Meta utun tun0; do
+        if ${pkgs.iproute2}/bin/ip link show "$iface" >/dev/null 2>&1; then
+          tun_ifaces="$tun_ifaces $iface"
+        fi
+      done
+
+      if [ -z "$tun_ifaces" ]; then
+        restart_clashix "no TUN interface found"
+        exit 0
+      fi
+
+      ${optionalString cfg.tun.healthCheck.requireDefaultRoute ''
+        route_dump=$(${pkgs.iproute2}/bin/ip route show table all 2>/dev/null || true)
+        route_ok=0
+        for iface in $tun_ifaces; do
+          if printf '%s\n' "$route_dump" | ${pkgs.gnugrep}/bin/grep -Eq "(^|[[:space:]])default .* dev $iface([[:space:]]|$)"; then
+            route_ok=1
+            break
+          fi
+        done
+
+        if [ "$route_ok" -ne 1 ]; then
+          restart_clashix "no default route through TUN interface ($tun_ifaces)"
+          exit 0
+        fi
+      ''}
+
+      echo "clashix: TUN health check OK ($tun_ifaces)"
+    '';
+
   # A script to apply subscriptions onto the config.
   #
   # Strategy: treat the subscription as the PRIMARY config, then overlay our
@@ -529,7 +584,7 @@ let
 in
 {
   # Clashix version
-  version = "1.1.2";
+  version = "1.1.3";
 
   inherit
     getDashboardPkg
@@ -538,6 +593,7 @@ in
     mkConfigCheckScript
     mkOverlayExpr
     mkShell
+    mkTunHealthCheckScript
     mkUpdateScript
     remoteOrigins
     geodataFiles

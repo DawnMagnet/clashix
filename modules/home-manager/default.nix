@@ -26,6 +26,11 @@ let
 
   # stateDir for Home Manager: follows XDG state convention
   stateDir = "${config.xdg.stateHome}/clashix";
+  tunHealthCheckScript = clashixLib.mkTunHealthCheckScript cfg {
+    inherit stateDir;
+    isActiveCommand = "${pkgs.systemd}/bin/systemctl --user --quiet is-active clashix.service";
+    restartCommand = "${pkgs.systemd}/bin/systemctl --user restart clashix.service";
+  };
 
 in
 {
@@ -172,6 +177,31 @@ in
           echo "TUN interface detected successfully"
         '');
       };
+    };
+
+    systemd.user.services.clashix-tun-health-check = mkIf (cfg.tun.enable && cfg.tun.healthCheck.enable) {
+      Unit = {
+        Description = "Check Clashix TUN health";
+        After = [ "clashix.service" ];
+      };
+
+      Service = {
+        Type = "oneshot";
+        ExecStart = "${tunHealthCheckScript}";
+      };
+    };
+
+    systemd.user.timers.clashix-tun-health-check = mkIf (cfg.tun.enable && cfg.tun.healthCheck.enable) {
+      Unit.Description = "Timer to check Clashix TUN health";
+
+      Timer = {
+        OnBootSec = cfg.tun.healthCheck.interval;
+        OnUnitActiveSec = cfg.tun.healthCheck.interval;
+        AccuracySec = "5s";
+        Unit = "clashix-tun-health-check.service";
+      };
+
+      Install.WantedBy = [ "timers.target" ];
     };
 
     # 2. Web dashboard (darkhttpd)

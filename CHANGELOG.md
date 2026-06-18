@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.3 - 2026-06-19
+
+### Fixed
+
+- Add a periodic TUN health check that restarts `clashix.service` when the TUN interface or its default route disappears after startup.
+
 ## 1.1.2 - 2026-05-19
 
 ### Fixed

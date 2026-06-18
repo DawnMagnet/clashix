@@ -28,6 +28,11 @@ let
 
   # The directory where Mihomo stores run-time data and downloaded providers
   stateDir = "/var/lib/clashix";
+  tunHealthCheckScript = clashixLib.mkTunHealthCheckScript cfg {
+    inherit stateDir;
+    isActiveCommand = "${pkgs.systemd}/bin/systemctl --quiet is-active clashix.service";
+    restartCommand = "${pkgs.systemd}/bin/systemctl restart clashix.service";
+  };
 
 in
 {
@@ -217,6 +222,27 @@ in
 
         fix_runtime_permissions
       '';
+    };
+
+    systemd.services.clashix-tun-health-check = mkIf (cfg.tun.enable && cfg.tun.healthCheck.enable) {
+      description = "Check Clashix TUN health";
+      after = [ "clashix.service" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${tunHealthCheckScript}";
+      };
+    };
+
+    systemd.timers.clashix-tun-health-check = mkIf (cfg.tun.enable && cfg.tun.healthCheck.enable) {
+      description = "Timer to check Clashix TUN health";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = cfg.tun.healthCheck.interval;
+        OnUnitActiveSec = cfg.tun.healthCheck.interval;
+        AccuracySec = "5s";
+        Unit = "clashix-tun-health-check.service";
+      };
     };
 
     # 2. Web dashboard (darkhttpd)
